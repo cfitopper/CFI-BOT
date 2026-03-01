@@ -10,7 +10,7 @@ from psycopg2.extras import RealDictCursor
 # SETTINGS
 # ─────────────────────────────────────────
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
-ADMIN_ROLES = ["Admin", "CFI - Dev"]
+ADMIN_ROLES = ["Admin", "CFI - Dev", "BOSS", "Head-moderator (crew)"]
 ANNOUNCEMENT_CHANNEL_ID = 0
 # ─────────────────────────────────────────
 
@@ -590,6 +590,7 @@ async def updatetier(interaction: discord.Interaction, tier: str):
     await send_announcement(embed.description)
 
 @tree.command(name="bracket", description="View the current round bracket for a tier")
+@is_admin()
 @app_commands.describe(tier="Select a tier")
 @app_commands.autocomplete(tier=tier_autocomplete)
 async def bracket(interaction: discord.Interaction, tier: str):
@@ -638,6 +639,7 @@ async def bracket(interaction: discord.Interaction, tier: str):
     await interaction.response.send_message(embed=embed)
 
 @tree.command(name="tier", description="View all players in a tier")
+@is_admin()
 @app_commands.describe(tier="Select a tier")
 @app_commands.autocomplete(tier=tier_autocomplete)
 async def view_tier(interaction: discord.Interaction, tier: str):
@@ -692,6 +694,7 @@ async def profile(interaction: discord.Interaction, player: discord.Member):
     await interaction.response.send_message(embed=embed)
 
 @tree.command(name="alltiers", description="Overview of all tiers and their players")
+@is_admin()
 async def alltiers(interaction: discord.Interaction):
     conn = get_db()
     c = conn.cursor()
