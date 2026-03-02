@@ -823,14 +823,33 @@ async def updateall(interaction: discord.Interaction):
     conn.commit()
     conn.close()
 
+    def make_chunks(lines, max_len=1000):
+        chunks = []
+        current = ""
+        for line in lines:
+            if len(current) + len(line) + 1 > max_len:
+                chunks.append(current)
+                current = line
+            else:
+                current += (chr(10) if current else "") + line
+        if current:
+            chunks.append(current)
+        return chunks
+
     embed = discord.Embed(title="🔄 Full Ranking Update", color=0xff9900)
 
     if promo_list:
-        embed.add_field(name="🎉 Promotions", value="\n".join([f"🎉 <@{n}> → **{t}**" for n, t in promo_list]), inline=False)
+        chunks = make_chunks([f"🎉 <@{n}> → **{t}**" for n, t in promo_list])
+        for i, chunk in enumerate(chunks):
+            embed.add_field(name="🎉 Promotions" if i == 0 else "​", value=chunk, inline=False)
     if demo_list:
-        embed.add_field(name="📉 Demotions", value="\n".join([f"📉 <@{n}> → **{t}**" for n, t in demo_list]), inline=False)
+        chunks = make_chunks([f"📉 <@{n}> → **{t}**" for n, t in demo_list])
+        for i, chunk in enumerate(chunks):
+            embed.add_field(name="📉 Demotions" if i == 0 else "​", value=chunk, inline=False)
     if none_list:
-        embed.add_field(name="➡️ No change", value="\n".join(none_list), inline=False)
+        chunks = make_chunks(none_list)
+        for i, chunk in enumerate(chunks):
+            embed.add_field(name="➡️ No change" if i == 0 else "​", value=chunk, inline=False)
 
     embed.set_footer(text="All round stats reset. New round can begin!")
     await interaction.followup.send(embed=embed)
