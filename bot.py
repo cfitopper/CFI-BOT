@@ -673,23 +673,27 @@ async def profile(interaction: discord.Interaction, player: discord.Member):
         await interaction.response.send_message(f"❌ **{display_name}** not found!", ephemeral=True)
         return
 
+    await interaction.response.defer()
+
     total = p["wins"] + p["losses"]
     winrate = round((p["wins"] / total * 100)) if total > 0 else 0
 
-    # Calculate global rank
+    # Calculate global rank in one query
     conn = get_db()
     c = conn.cursor()
+    c.execute("SELECT name, tier, rank_in_tier FROM players ORDER BY rank_in_tier ASC")
+    all_p = [dict(r) for r in c.fetchall()]
+    conn.close()
+
     global_rank = 1
     for tier in TIERS:
-        c.execute("SELECT name FROM players WHERE tier = %s ORDER BY rank_in_tier ASC", (tier,))
-        for row in c.fetchall():
+        for row in [x for x in all_p if x["tier"] == tier]:
             if row["name"] == uid:
                 break
             global_rank += 1
         else:
             continue
         break
-    conn.close()
 
     embed = discord.Embed(title=f"⚽ {display_name}", color=0xffaa00)
     embed.set_thumbnail(url=player.display_avatar.url)
@@ -706,7 +710,7 @@ async def profile(interaction: discord.Interaction, player: discord.Member):
         f"**Licensed:** {licensed}\n"
         f"**Playstyle:** {playstyle}"
     )
-    await interaction.response.send_message(embed=embed)
+    await interaction.followup.send(embed=embed)
 
 @tree.command(name="alltiers", description="Overview of all tiers and their players")
 @is_admin()
