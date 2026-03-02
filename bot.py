@@ -885,36 +885,37 @@ async def overview(interaction: discord.Interaction):
             tier_data[t] = []
         tier_data[t].append(r["player_id"])
 
+    embed = discord.Embed(title="🌍 CFI Ranking", color=0x00ff88)
     global_rank = 1
-    message = "🌍 **CFI Ranking**" + chr(10)
     for tier in TIERS:
         if tier in tier_data:
-            message += chr(10) + f"**{tier}**" + chr(10)
+            lines = []
             for uid in tier_data[tier]:
                 p = all_players.get(uid)
                 if p:
                     total = p["wins"] + p["losses"]
                     winrate = round((p["wins"] / total * 100)) if total > 0 else 0
-                    message += f"{global_rank}. <@{uid}>" + chr(10)
-                    message += f"W: {p['wins']} | L: {p['losses']} | Goals: {p['goals']} | Winrate: {winrate}%" + chr(10)
+                    lines.append(f"{global_rank}. <@{uid}>" + chr(10) + f"W: {p['wins']} | L: {p['losses']} | Goals: {p['goals']} | Winrate: {winrate}%")
                 else:
-                    message += f"{global_rank}. <@{uid}>" + chr(10)
+                    lines.append(f"{global_rank}. <@{uid}>")
                 global_rank += 1
 
-    # Split into chunks of max 1900 chars
-    chunks = []
-    current = ""
-    for line in message.split(chr(10)):
-        if len(current) + len(line) + 1 > 1900:
-            chunks.append(current)
-            current = line
-        else:
-            current += (chr(10) if current else "") + line
-    if current:
-        chunks.append(current)
+            # Split into chunks of max 1000 chars per field
+            field_chunks = []
+            current = ""
+            for line in lines:
+                if len(current) + len(line) + 1 > 1000:
+                    field_chunks.append(current)
+                    current = line
+                else:
+                    current += (chr(10) if current else "") + line
+            if current:
+                field_chunks.append(current)
 
-    for chunk in chunks:
-        await interaction.followup.send(chunk, allowed_mentions=discord.AllowedMentions(users=True))
+            for i, chunk in enumerate(field_chunks):
+                embed.add_field(name="​" if i > 0 else "​", value=f"**{tier}**" + chr(10) + chunk if i == 0 else chunk, inline=False)
+
+    await interaction.followup.send(embed=embed, allowed_mentions=discord.AllowedMentions(users=True))
 
 
 @tree.command(name="goals", description="Top scorers leaderboard")
