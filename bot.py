@@ -118,6 +118,26 @@ def is_admin():
         return True
     return app_commands.check(predicate)
 
+def is_cfi_dev():
+    async def predicate(interaction: discord.Interaction):
+        user_roles = [role.name for role in interaction.user.roles]
+        if "CFI - Dev" not in user_roles:
+            await interaction.response.send_message("❌ Only CFI Dev can use this command!", ephemeral=True)
+            return False
+        return True
+    return app_commands.check(predicate)
+
+SCORE_ROLES = ["Admin", "CFI - Dev", "BOSS", "Head-moderator (crew)", "Moderator (crew)"]
+
+def can_score():
+    async def predicate(interaction: discord.Interaction):
+        user_roles = [role.name for role in interaction.user.roles]
+        if not any(r in user_roles for r in SCORE_ROLES):
+            await interaction.response.send_message("❌ You don't have permission to use this command!", ephemeral=True)
+            return False
+        return True
+    return app_commands.check(predicate)
+
 def get_player(name: str):
     conn = get_db()
     c = conn.cursor()
@@ -332,7 +352,7 @@ async def removeplayer(interaction: discord.Interaction, player: discord.Member)
     await interaction.response.send_message(f"🗑️ **{display}** removed.")
 
 @tree.command(name="score", description="Submit a match score (admin only)")
-@is_admin()
+@can_score()
 @app_commands.describe(
     player1="Select player 1",
     goals1="Goals scored by player 1",
@@ -432,7 +452,7 @@ async def score(interaction: discord.Interaction, player1: discord.Member, goals
 
 
 @tree.command(name="unscore", description="Undo the last match between two players (admin only)")
-@is_admin()
+@can_score()
 @app_commands.describe(
     player1="First player",
     player2="Second player"
@@ -748,7 +768,7 @@ async def alltiers(interaction: discord.Interaction):
 
 
 @tree.command(name="updateall", description="Process all promos and demos for every tier at once (admin only)")
-@is_admin()
+@is_cfi_dev()
 async def updateall(interaction: discord.Interaction):
     await interaction.response.defer()
 
@@ -857,7 +877,7 @@ async def updateall(interaction: discord.Interaction):
 
 
 @tree.command(name="overview", description="CFI Ranking as it was after the last /updateall")
-@is_admin()
+@is_cfi_dev()
 async def overview(interaction: discord.Interaction):
     await interaction.response.defer()
 
