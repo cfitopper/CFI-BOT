@@ -111,7 +111,7 @@ def setup_db():
 # ─────────────────────────────────────────
 def is_admin():
     async def predicate(interaction: discord.Interaction):
-        user_roles = [role.name for role in interaction.user.roles]
+        user_roles = [role.name.strip() for role in interaction.user.roles]
         if not any(r in user_roles for r in ADMIN_ROLES):
             await interaction.response.send_message("❌ You don't have admin permissions!", ephemeral=True)
             return False
@@ -120,18 +120,18 @@ def is_admin():
 
 def is_cfi_dev():
     async def predicate(interaction: discord.Interaction):
-        user_roles = [role.name for role in interaction.user.roles]
+        user_roles = [role.name.strip() for role in interaction.user.roles]
         if "CFI - Dev" not in user_roles:
             await interaction.response.send_message("❌ Only CFI Dev can use this command!", ephemeral=True)
             return False
         return True
     return app_commands.check(predicate)
 
-SCORE_ROLES = ["Admin", "CFI - Dev", "BOSS", "Head-moderator (crew)", "Moderator (crew)"]
+SCORE_ROLES = ["Admin", "CFI - Dev", "BOSS", "Head-moderator (crew)", "Moderator (crew)", "League Moderator (crew)"]
 
 def can_score():
     async def predicate(interaction: discord.Interaction):
-        user_roles = [role.name for role in interaction.user.roles]
+        user_roles = [role.name.strip() for role in interaction.user.roles]
         if not any(r in user_roles for r in SCORE_ROLES):
             await interaction.response.send_message("❌ You don't have permission to use this command!", ephemeral=True)
             return False
