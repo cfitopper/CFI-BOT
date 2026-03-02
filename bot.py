@@ -676,13 +676,28 @@ async def profile(interaction: discord.Interaction, player: discord.Member):
     total = p["wins"] + p["losses"]
     winrate = round((p["wins"] / total * 100)) if total > 0 else 0
 
+    # Calculate global rank
+    conn = get_db()
+    c = conn.cursor()
+    global_rank = 1
+    for tier in TIERS:
+        c.execute("SELECT name FROM players WHERE tier = %s ORDER BY rank_in_tier ASC", (tier,))
+        for row in c.fetchall():
+            if row["name"] == uid:
+                break
+            global_rank += 1
+        else:
+            continue
+        break
+    conn.close()
+
     embed = discord.Embed(title=f"⚽ {display_name}", color=0xffaa00)
     embed.set_thumbnail(url=player.display_avatar.url)
     licensed = p.get("licensed", "No")
     playstyle = p.get("playstyle", "Balanced")
     embed.description = (
         f"**Tier:** {p['tier']}\n"
-        f"**Current Rank:** {p['rank_in_tier']}\n"
+        f"**Global Rank:** #{global_rank}\n"
         f"**Wins:** {p['wins']}\n"
         f"**Losses:** {p['losses']}\n"
         f"**Goals Scored:** {p['goals']}\n"
@@ -819,6 +834,7 @@ async def updateall(interaction: discord.Interaction):
 
 
 @tree.command(name="overview", description="CFI Ranking as it was after the last /updateall")
+@is_admin()
 async def overview(interaction: discord.Interaction):
     await interaction.response.defer()
 
@@ -863,6 +879,33 @@ async def overview(interaction: discord.Interaction):
                 global_rank += 1
 
     await interaction.followup.send(message, allowed_mentions=discord.AllowedMentions(users=True))
+
+
+@tree.command(name="goals", description="Top scorers leaderboard")
+async def goals(interaction: discord.Interaction):
+    await interaction.response.defer()
+
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT * FROM players ORDER BY goals DESC LIMIT 20")
+    players = [dict(p) for p in c.fetchall()]
+    conn.close()
+
+    if not players:
+        await interaction.followup.send("No players found!")
+        return
+
+    embed = discord.Embed(title="🥅 Top Scorers", color=0x00cc44)
+    lines = []
+    medals = ["🥇", "🥈", "🥉"]
+    for i, p in enumerate(players):
+        uid = get_uid(p["name"])
+        member = interaction.guild.get_member(int(uid))
+        name_str = member.display_name if member else uid
+        medal = medals[i] if i < 3 else f"{i+1}."
+        lines.append(f"{medal} {name_str} — {p['goals']} goals ({p['tier']})")
+    embed.description = chr(10).join(lines)
+    await interaction.followup.send(embed=embed)
 
 @tree.command(name="setstats", description="Manually update a player's stats (admin only)")
 @is_admin()
