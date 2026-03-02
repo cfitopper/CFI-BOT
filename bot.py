@@ -878,7 +878,20 @@ async def overview(interaction: discord.Interaction):
                     message += f"{global_rank}. <@{uid}>" + chr(10)
                 global_rank += 1
 
-    await interaction.followup.send(message, allowed_mentions=discord.AllowedMentions(users=True))
+    # Split into chunks of max 1900 chars
+    chunks = []
+    current = ""
+    for line in message.split(chr(10)):
+        if len(current) + len(line) + 1 > 1900:
+            chunks.append(current)
+            current = line
+        else:
+            current += (chr(10) if current else "") + line
+    if current:
+        chunks.append(current)
+
+    for chunk in chunks:
+        await interaction.followup.send(chunk, allowed_mentions=discord.AllowedMentions(users=True))
 
 
 @tree.command(name="goals", description="Top scorers leaderboard")
