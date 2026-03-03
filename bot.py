@@ -382,11 +382,16 @@ async def removeplayer(interaction: discord.Interaction, player: discord.Member)
 @can_score()
 @app_commands.describe(
     player1="Select player 1",
-    goals1="Goals scored by player 1 (or 'dq')",
+    goals1="Goals scored by player 1",
     player2="Select player 2",
-    goals2="Goals scored by player 2 (or 'dq')"
+    goals2="Goals scored by player 2",
+    dq_player="Which player gets DQ? (leave empty if no DQ)"
 )
-async def score(interaction: discord.Interaction, player1: discord.Member, goals1: str, player2: discord.Member, goals2: str):
+@app_commands.choices(dq_player=[
+    app_commands.Choice(name="Player 1", value="player1"),
+    app_commands.Choice(name="Player 2", value="player2"),
+])
+async def score(interaction: discord.Interaction, player1: discord.Member, player2: discord.Member, goals1: int = 0, goals2: int = 0, dq_player: str = ""):
     await interaction.response.defer()
 
     name1 = str(player1.id)
@@ -403,24 +408,14 @@ async def score(interaction: discord.Interaction, player1: discord.Member, goals
         return
 
     # Handle DQ
-    dq = False
-    if goals1.lower() == "dq" or goals2.lower() == "dq":
-        dq = True
-        if goals1.lower() == "dq" and goals2.lower() == "dq":
-            await interaction.followup.send("❌ Both players can't be DQ!")
-            return
-        if goals1.lower() == "dq":
+    dq = bool(dq_player)
+    if dq:
+        if dq_player == "player1":
             winner_name, loser_name = name2, name1
         else:
             winner_name, loser_name = name1, name2
         winner_goals, loser_goals = 0, 0
     else:
-        try:
-            goals1 = int(goals1)
-            goals2 = int(goals2)
-        except ValueError:
-            await interaction.followup.send("❌ Goals must be a number or 'dq'!")
-            return
         if goals1 == goals2:
             await interaction.followup.send("❌ Draws are not allowed!")
             return
