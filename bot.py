@@ -382,11 +382,11 @@ async def removeplayer(interaction: discord.Interaction, player: discord.Member)
 @can_score()
 @app_commands.describe(
     player1="Select player 1",
-    goals1="Goals scored by player 1",
+    goals1="Goals scored by player 1 (or 'dq')",
     player2="Select player 2",
-    goals2="Goals scored by player 2"
+    goals2="Goals scored by player 2 (or 'dq')"
 )
-async def score(interaction: discord.Interaction, player1: discord.Member, goals1: int, player2: discord.Member, goals2: int):
+async def score(interaction: discord.Interaction, player1: discord.Member, goals1: str, player2: discord.Member, goals2: str):
     await interaction.response.defer()
 
     name1 = str(player1.id)
@@ -401,11 +401,35 @@ async def score(interaction: discord.Interaction, player1: discord.Member, goals
     if not p2:
         await interaction.followup.send(f"❌ {player2.display_name} not found!")
         return
-    if goals1 == goals2:
-        await interaction.followup.send("❌ Draws are not allowed!")
-        return
 
-    if (p1["round_wins"], p1["round_losses"]) != (p2["round_wins"], p2["round_losses"]):
+    # Handle DQ
+    dq = False
+    if goals1.lower() == "dq" or goals2.lower() == "dq":
+        dq = True
+        if goals1.lower() == "dq" and goals2.lower() == "dq":
+            await interaction.followup.send("❌ Both players can't be DQ!")
+            return
+        if goals1.lower() == "dq":
+            winner_name, loser_name = name2, name1
+        else:
+            winner_name, loser_name = name1, name2
+        winner_goals, loser_goals = 0, 0
+    else:
+        try:
+            goals1 = int(goals1)
+            goals2 = int(goals2)
+        except ValueError:
+            await interaction.followup.send("❌ Goals must be a number or 'dq'!")
+            return
+        if goals1 == goals2:
+            await interaction.followup.send("❌ Draws are not allowed!")
+            return
+        winner_name = name1 if goals1 > goals2 else name2
+        loser_name = name2 if goals1 > goals2 else name1
+        winner_goals = max(goals1, goals2)
+        loser_goals = min(goals1, goals2)
+
+    if not dq and (p1["round_wins"], p1["round_losses"]) != (p2["round_wins"], p2["round_losses"]):
         await interaction.followup.send(
             f"❌ {player1.display_name} ({p1['round_wins']}W/{p1['round_losses']}L) and {player2.display_name} ({p2['round_wins']}W/{p2['round_losses']}L) don't have the same round record and can't face each other yet!"
         )
@@ -415,16 +439,13 @@ async def score(interaction: discord.Interaction, player1: discord.Member, goals
         await interaction.followup.send("❌ One of these players is already done with this round!")
         return
 
-    winner_name = name1 if goals1 > goals2 else name2
-    loser_name = name2 if goals1 > goals2 else name1
-    winner_goals = max(goals1, goals2)
-    loser_goals = min(goals1, goals2)
-
     conn = get_db()
     c = conn.cursor()
+    score1_db = "dq" if (dq and loser_name == name1) else str(goals1)
+    score2_db = "dq" if (dq and loser_name == name2) else str(goals2)
     c.execute(
         "INSERT INTO matches (player1, player2, score1, score2, date) VALUES (%s, %s, %s, %s, %s)",
-        (name1, name2, goals1, goals2, datetime.now().isoformat())
+        (name1, name2, score1_db, score2_db, datetime.now().isoformat())
     )
 
     # Check if tier counts for golden boot
