@@ -1028,7 +1028,7 @@ async def goldenboot(interaction: discord.Interaction):
     await interaction.response.defer()
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT * FROM players ORDER BY golden_boot_goals DESC LIMIT 5")
+    c.execute("SELECT * FROM players ORDER BY golden_boot_goals DESC LIMIT 10")
     players = [dict(p) for p in c.fetchall()]
     conn.close()
 
@@ -1036,16 +1036,15 @@ async def goldenboot(interaction: discord.Interaction):
         await interaction.followup.send("No players found!")
         return
 
-    medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
-    embed = discord.Embed(title="🥅 CFI Golden Boot — Top 5", color=0xFFD700)
+    medals = ["🥇", "🥈", "🥉"]
+    embed = discord.Embed(title="🥅 CFI Golden Boot — Top 10", color=0xFFD700)
     lines = []
     for i, p in enumerate(players):
         uid = get_uid(p["name"])
-        member = interaction.guild.get_member(int(uid))
-        name_str = member.display_name if member else uid
-        lines.append(f"{medals[i]} **{name_str}** — {p['golden_boot_goals']} goals ({p['tier']})")
+        medal = medals[i] if i < 3 else f"{i+1}."
+        lines.append(f"{medal} <@{uid}> — {p['golden_boot_goals']} goals ({p['tier']})")
     embed.description = chr(10).join(lines)
-    await interaction.followup.send(embed=embed)
+    await interaction.followup.send(embed=embed, allowed_mentions=discord.AllowedMentions(users=True))
 
 @tree.command(name="setstats", description="Manually update a player's stats (admin only)")
 @is_admin()
