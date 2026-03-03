@@ -139,6 +139,17 @@ def is_cfi_dev():
         return True
     return app_commands.check(predicate)
 
+BRACKET_ROLES = ["Admin", "CFI - Dev", "BOSS", "Head-moderator (crew)", "League Moderator (crew)"]
+
+def can_bracket():
+    async def predicate(interaction: discord.Interaction):
+        user_roles = [role.name.strip() for role in interaction.user.roles]
+        if not any(r in user_roles for r in BRACKET_ROLES):
+            await interaction.response.send_message("❌ You don't have permission to use this command!", ephemeral=True)
+            return False
+        return True
+    return app_commands.check(predicate)
+
 SCORE_ROLES = ["Admin", "CFI - Dev", "BOSS", "Head-moderator (crew)", "Moderator (crew)", "League Moderator (crew)"]
 
 def can_score():
@@ -654,7 +665,7 @@ async def updatetier(interaction: discord.Interaction, tier: str):
     await send_announcement(embed.description)
 
 @tree.command(name="bracket", description="View the current round bracket for a tier")
-@is_admin()
+@can_bracket()
 @app_commands.describe(tier="Select a tier")
 @app_commands.autocomplete(tier=tier_autocomplete)
 async def bracket(interaction: discord.Interaction, tier: str):
