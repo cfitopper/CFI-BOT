@@ -1011,16 +1011,15 @@ async def goals(interaction: discord.Interaction):
 
 @tree.command(name="setgoalsgoldenboot", description="Manually set golden boot goals for a player (admin only)")
 @is_admin()
-@app_commands.describe(player="Select a player", goals="Number of golden boot goals")
-@app_commands.autocomplete(player=player_autocomplete)
-async def setgoalsgoldenboot(interaction: discord.Interaction, player: str, goals: int):
+@app_commands.describe(player="Select a Discord user", goals="Number of golden boot goals")
+async def setgoalsgoldenboot(interaction: discord.Interaction, player: discord.Member, goals: int):
     await interaction.response.defer()
+    uid = str(player.id)
     conn = get_db()
     c = conn.cursor()
-    c.execute("UPDATE players SET golden_boot_goals = %s WHERE name = %s", (goals, player))
+    c.execute("UPDATE players SET golden_boot_goals = %s WHERE name = %s", (goals, uid))
     conn.commit()
     conn.close()
-    uid = get_uid(player)
     await interaction.followup.send(f"✅ Golden Boot goals for <@{uid}> set to **{goals}**!", allowed_mentions=discord.AllowedMentions(users=True))
 
 @tree.command(name="goldenboot", description="Top 5 CFI Golden Boot scorers")
