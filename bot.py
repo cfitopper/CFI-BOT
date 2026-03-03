@@ -1082,12 +1082,15 @@ async def goldenboot(interaction: discord.Interaction):
     tier="New tier",
     rank="New rank in tier (1-4)",
     licensed="Is the player licensed? Yes or No",
-    playstyle="Player playstyle"
+    playstyle="Player playstyle",
+    round_wins="New round wins count",
+    round_losses="New round losses count"
 )
 @app_commands.autocomplete(tier=tier_autocomplete, licensed=licensed_autocomplete, playstyle=playstyle_autocomplete)
 async def setstats(interaction: discord.Interaction, player: discord.Member,
                    wins: int = None, losses: int = None, goals: int = None,
-                   tier: str = None, rank: int = None, licensed: str = None, playstyle: str = None):
+                   tier: str = None, rank: int = None, licensed: str = None, playstyle: str = None,
+                   round_wins: int = None, round_losses: int = None):
     uid = str(player.id)
     display = player.display_name
     p = get_player(uid)
@@ -1126,6 +1129,12 @@ async def setstats(interaction: discord.Interaction, player: discord.Member,
     if licensed is not None:
         updates.append("licensed = %s")
         values.append(licensed)
+    if round_wins is not None:
+        updates.append("round_wins = %s")
+        values.append(round_wins)
+    if round_losses is not None:
+        updates.append("round_losses = %s")
+        values.append(round_losses)
     if playstyle is not None:
         updates.append("playstyle = %s")
         values.append(playstyle)
