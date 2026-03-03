@@ -14,6 +14,11 @@ ADMIN_ROLES = ["Admin", "CFI - Dev", "BOSS", "Head-moderator (crew)"]
 ANNOUNCEMENT_CHANNEL_ID = 0
 # ─────────────────────────────────────────
 
+GOLDEN_BOOT_TIERS = [
+    "Cosmic", "Universal", "Galaxy", "Global", "International",
+    "Elite 1", "Elite 2", "Elite 3"
+]
+
 TIERS = [
     "Cosmic", "Universal", "Galaxy",
     "Global", "International",
@@ -52,7 +57,8 @@ def setup_db():
             round_losses INTEGER DEFAULT 0,
             round_done INTEGER DEFAULT 0,
             licensed TEXT DEFAULT 'No',
-            playstyle TEXT DEFAULT 'Balanced'
+            playstyle TEXT DEFAULT 'Balanced',
+            golden_boot_goals INTEGER DEFAULT 0
         )
     """)
     c.execute("""
@@ -89,6 +95,12 @@ def setup_db():
     # Add pending column if it doesn't exist yet
     try:
         c.execute("ALTER TABLE players ADD COLUMN pending INTEGER DEFAULT 0")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+
+    try:
+        c.execute("ALTER TABLE players ADD COLUMN golden_boot_goals INTEGER DEFAULT 0")
         conn.commit()
     except Exception:
         conn.rollback()
@@ -400,14 +412,31 @@ async def score(interaction: discord.Interaction, player1: discord.Member, goals
         (name1, name2, goals1, goals2, datetime.now().isoformat())
     )
 
-    c.execute("""
-        UPDATE players SET wins = wins + 1, goals = goals + %s, goals_against = goals_against + %s,
-        round_wins = round_wins + 1 WHERE name = %s
-    """, (winner_goals, loser_goals, winner_name))
-    c.execute("""
-        UPDATE players SET losses = losses + 1, goals = goals + %s, goals_against = goals_against + %s,
-        round_losses = round_losses + 1 WHERE name = %s
-    """, (loser_goals, winner_goals, loser_name))
+    # Check if tier counts for golden boot
+    c.execute("SELECT tier FROM players WHERE name = %s", (winner_name,))
+    row = c.fetchone()
+    in_golden_boot_tier = row["tier"] in GOLDEN_BOOT_TIERS if row else False
+
+    if in_golden_boot_tier:
+        c.execute("""
+            UPDATE players SET wins = wins + 1, goals = goals + %s, goals_against = goals_against + %s,
+            golden_boot_goals = golden_boot_goals + %s,
+            round_wins = round_wins + 1 WHERE name = %s
+        """, (winner_goals, loser_goals, winner_goals, winner_name))
+        c.execute("""
+            UPDATE players SET losses = losses + 1, goals = goals + %s, goals_against = goals_against + %s,
+            golden_boot_goals = golden_boot_goals + %s,
+            round_losses = round_losses + 1 WHERE name = %s
+        """, (loser_goals, winner_goals, loser_goals, loser_name))
+    else:
+        c.execute("""
+            UPDATE players SET wins = wins + 1, goals = goals + %s, goals_against = goals_against + %s,
+            round_wins = round_wins + 1 WHERE name = %s
+        """, (winner_goals, loser_goals, winner_name))
+        c.execute("""
+            UPDATE players SET losses = losses + 1, goals = goals + %s, goals_against = goals_against + %s,
+            round_losses = round_losses + 1 WHERE name = %s
+        """, (loser_goals, winner_goals, loser_name))
 
     conn.commit()
 
@@ -421,11 +450,11 @@ async def score(interaction: discord.Interaction, player1: discord.Member, goals
 
     if winner["round_wins"] >= 2:
         c.execute("UPDATE players SET round_done = 1 WHERE name = %s", (winner_name,))
-        promo_msg = f"\n🎉 <@{get_uid(winner_name)}> has 2 wins — **PROMOTION** incoming! Use `/updatetier {winner['tier']}` to process."
+        promo_msg = f"\n🎉 <@{get_uid(winner_name)}> has 2 wins — **PROMOTION** incoming!"
 
     if loser["round_losses"] >= 2:
         c.execute("UPDATE players SET round_done = 1 WHERE name = %s", (loser_name,))
-        demo_msg = f"\n📉 <@{get_uid(loser_name)}> has 2 losses — **DEMOTION** incoming! Use `/updatetier {loser['tier']}` to process."
+        demo_msg = f"\n📉 <@{get_uid(loser_name)}> has 2 losses — **DEMOTION** incoming!"
 
     conn.commit()
     conn.close()
@@ -651,7 +680,7 @@ async def bracket(interaction: discord.Interaction, tier: str):
     else:
         active = [p for p in players if not p["round_done"]]
         if not active:
-            embed.add_field(name="✅ Round Complete!", value="Use `/updatetier` to process promos and demos.", inline=False)
+            embed.add_field(name="✅ Round Complete!", value="All matches in this tier are done!", inline=False)
         else:
             embed.add_field(name="⏳ Waiting...", value="Not enough players with the same record to make a match yet.", inline=False)
 
@@ -961,6 +990,46 @@ async def goals(interaction: discord.Interaction):
         name_str = member.display_name if member else uid
         medal = medals[i] if i < 3 else f"{i+1}."
         lines.append(f"{medal} {name_str} — {p['goals']} goals ({p['tier']})")
+    embed.description = chr(10).join(lines)
+    await interaction.followup.send(embed=embed)
+
+
+@tree.command(name="setgoalsgoldenboot", description="Manually set golden boot goals for a player (admin only)")
+@is_admin()
+@app_commands.describe(player="Select a player", goals="Number of golden boot goals")
+@app_commands.autocomplete(player=player_autocomplete)
+async def setgoalsgoldenboot(interaction: discord.Interaction, player: str, goals: int):
+    await interaction.response.defer()
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("UPDATE players SET golden_boot_goals = %s WHERE name = %s", (goals, player))
+    conn.commit()
+    conn.close()
+    uid = get_uid(player)
+    await interaction.followup.send(f"✅ Golden Boot goals for <@{uid}> set to **{goals}**!", allowed_mentions=discord.AllowedMentions(users=True))
+
+@tree.command(name="goldenboot", description="Top 5 CFI Golden Boot scorers")
+@is_admin()
+async def goldenboot(interaction: discord.Interaction):
+    await interaction.response.defer()
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT * FROM players ORDER BY golden_boot_goals DESC LIMIT 5")
+    players = [dict(p) for p in c.fetchall()]
+    conn.close()
+
+    if not players:
+        await interaction.followup.send("No players found!")
+        return
+
+    medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
+    embed = discord.Embed(title="🥅 CFI Golden Boot — Top 5", color=0xFFD700)
+    lines = []
+    for i, p in enumerate(players):
+        uid = get_uid(p["name"])
+        member = interaction.guild.get_member(int(uid))
+        name_str = member.display_name if member else uid
+        lines.append(f"{medals[i]} **{name_str}** — {p['golden_boot_goals']} goals ({p['tier']})")
     embed.description = chr(10).join(lines)
     await interaction.followup.send(embed=embed)
 
