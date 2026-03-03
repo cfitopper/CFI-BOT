@@ -291,6 +291,21 @@ async def tier_autocomplete(interaction: discord.Interaction, current: str):
         for tier in TIERS if current.lower() in tier.lower()
     ]
 
+async def player_autocomplete(interaction: discord.Interaction, current: str):
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT name FROM players ORDER BY tier, rank_in_tier")
+    players = [dict(p) for p in c.fetchall()]
+    conn.close()
+    results = []
+    for p in players:
+        uid = get_uid(p["name"])
+        member = interaction.guild.get_member(int(uid))
+        display = member.display_name if member else uid
+        if current.lower() in display.lower():
+            results.append(app_commands.Choice(name=display, value=p["name"]))
+    return results[:25]
+
 @tree.command(name="addplayer", description="Add a player to a tier (admin only)")
 @is_admin()
 @app_commands.describe(
