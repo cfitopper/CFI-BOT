@@ -585,9 +585,9 @@ async def unscore(interaction: discord.Interaction, player1: discord.Member, pla
 
 @tree.command(name="updatetier", description="Process promos and demos for a tier (admin only)")
 @is_admin()
-@app_commands.describe(tier="Select a tier")
+@app_commands.describe(tier="Select a tier", remove_losers="Remove losers instead of demoting them")
 @app_commands.autocomplete(tier=tier_autocomplete)
-async def updatetier(interaction: discord.Interaction, tier: str):
+async def updatetier(interaction: discord.Interaction, tier: str, remove_losers: bool = False):
     await interaction.response.defer()
 
     tier = tier.title()
@@ -606,6 +606,7 @@ async def updatetier(interaction: discord.Interaction, tier: str):
 
     promo_list = []
     demo_list = []
+    removed_list = []
 
     for p in players:
         name = p["name"]
@@ -616,7 +617,6 @@ async def updatetier(interaction: discord.Interaction, tier: str):
             current_idx = tier_index(p["tier"])
             if current_idx > 0:
                 new_tier = TIERS[current_idx - 1]
-                # Move to new tier as pending — don't reset round stats yet
                 c.execute(
                     "UPDATE players SET tier = %s, pending = 1 WHERE name = %s",
                     (new_tier, name)
@@ -626,23 +626,28 @@ async def updatetier(interaction: discord.Interaction, tier: str):
             else:
                 results.append(f"🏅 <@{get_uid(name)}> is already in the highest tier!")
         elif rl >= 2:
-            current_idx = tier_index(p["tier"])
-            if current_idx < len(TIERS) - 1:
-                new_tier = TIERS[current_idx + 1]
-                # Move to new tier as pending — don't reset round stats yet
-                c.execute(
-                    "UPDATE players SET tier = %s, pending = 1 WHERE name = %s",
-                    (new_tier, name)
-                )
-                demo_list.append((name, new_tier))
-                results.append(f"📉 <@{get_uid(name)}> → **{new_tier}** (pending)")
-            else:
+            if remove_losers:
                 c.execute("DELETE FROM players WHERE name = %s", (name,))
-                results.append(f"🚫 <@{get_uid(name)}> has been removed from the system (bottom of Bronze)")
+                removed_list.append(name)
+                results.append(f"🚫 <@{get_uid(name)}> removed from the competition")
+            else:
+                current_idx = tier_index(p["tier"])
+                if current_idx < len(TIERS) - 1:
+                    new_tier = TIERS[current_idx + 1]
+                    c.execute(
+                        "UPDATE players SET tier = %s, pending = 1 WHERE name = %s",
+                        (new_tier, name)
+                    )
+                    demo_list.append((name, new_tier))
+                    results.append(f"📉 <@{get_uid(name)}> → **{new_tier}** (pending)")
+                else:
+                    c.execute("DELETE FROM players WHERE name = %s", (name,))
+                    removed_list.append(name)
+                    results.append(f"🚫 <@{get_uid(name)}> removed from the system (bottom of Bronze)")
         else:
             results.append(f"➡️ <@{get_uid(name)}>: {rw}W / {rl}L — no change")
 
-    # Fix ranks in affected tiers
+    # Fix ranks in affected tiers (excluding removed players)
     affected_tiers = set([tier] + [t for _, t in promo_list] + [t for _, t in demo_list])
     for t in affected_tiers:
         c.execute("SELECT * FROM players WHERE tier = %s ORDER BY rank_in_tier ASC", (t,))
@@ -653,6 +658,16 @@ async def updatetier(interaction: discord.Interaction, tier: str):
         ordered = demoted_into + stayers + promoted_into
         for i, name in enumerate(ordered):
             c.execute("UPDATE players SET rank_in_tier = %s WHERE name = %s", (i + 1, name))
+
+    # After removal cascade ranks down through all tiers below
+    if removed_list:
+        tier_idx = tier_index(tier)
+        for t_idx in range(tier_idx, len(TIERS)):
+            t = TIERS[t_idx]
+            c.execute("SELECT * FROM players WHERE tier = %s ORDER BY rank_in_tier ASC", (t,))
+            t_players = [dict(p) for p in c.fetchall()]
+            for i, p in enumerate(t_players):
+                c.execute("UPDATE players SET rank_in_tier = %s WHERE name = %s", (i + 1, p["name"]))
 
     conn.commit()
     conn.close()
