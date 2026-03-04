@@ -1132,9 +1132,21 @@ async def setstats(interaction: discord.Interaction, player: discord.Member,
     if round_wins is not None:
         updates.append("round_wins = %s")
         values.append(round_wins)
+        # Also update total wins by the difference
+        old_round_wins = p["round_wins"] or 0
+        diff_wins = round_wins - old_round_wins
+        if diff_wins != 0:
+            updates.append("wins = wins + %s")
+            values.append(diff_wins)
     if round_losses is not None:
         updates.append("round_losses = %s")
         values.append(round_losses)
+        # Also update total losses by the difference
+        old_round_losses = p["round_losses"] or 0
+        diff_losses = round_losses - old_round_losses
+        if diff_losses != 0:
+            updates.append("losses = losses + %s")
+            values.append(diff_losses)
     if playstyle is not None:
         updates.append("playstyle = %s")
         values.append(playstyle)
