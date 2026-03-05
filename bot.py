@@ -1315,6 +1315,59 @@ from threading import Thread
 
 app = Flask(__name__)
 
+@tree.command(name="showscores", description="Show total stats for all players in a tier")
+@is_admin()
+@app_commands.describe(tier="Select a tier")
+@app_commands.autocomplete(tier=tier_autocomplete)
+async def showscores(interaction: discord.Interaction, tier: str):
+    await interaction.response.defer()
+    tier = tier.title()
+    if tier not in TIERS:
+        await interaction.followup.send("❌ Invalid tier!", ephemeral=True)
+        return
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT * FROM players WHERE tier = %s ORDER BY rank_in_tier ASC", (tier,))
+    players = [dict(p) for p in c.fetchall()]
+    conn.close()
+    if not players:
+        await interaction.followup.send(f"❌ No players found in **{tier}**!")
+        return
+    embed = discord.Embed(title=f"📊 Scores — {tier}", color=0x00ff88)
+    lines = []
+    for p in players:
+        uid = get_uid(p["name"])
+        lines.append(f"<@{uid}> — W: {p['wins']} | L: {p['losses']} | Goals: {p['goals']}")
+    embed.description = chr(10).join(lines)
+    await interaction.followup.send(embed=embed, allowed_mentions=discord.AllowedMentions(users=True))
+
+@tree.command(name="log", description="View bot activity log for today (admin only)")
+@is_admin()
+async def log(interaction: discord.Interaction):
+    await interaction.response.defer()
+    conn = get_db()
+    c = conn.cursor()
+    today = datetime.now().strftime("%Y-%m-%d")
+    c.execute("""
+        SELECT player1, player2, score1, score2, date FROM matches
+        WHERE date LIKE %s ORDER BY date DESC LIMIT 30
+    """, (today + "%",))
+    matches = [dict(m) for m in c.fetchall()]
+    conn.close()
+    if not matches:
+        await interaction.followup.send("📋 No activity logged today.")
+        return
+    embed = discord.Embed(title=f"📋 Bot Log — {today}", color=0x5865F2)
+    lines = []
+    for m in matches:
+        uid1 = m["player1"]
+        uid2 = m["player2"]
+        time_str = m["date"][11:16] if m["date"] else "?"
+        lines.append(f"`{time_str}` <@{uid1}> {m['score1']} — {m['score2']} <@{uid2}>")
+    embed.description = chr(10).join(lines)
+    await interaction.followup.send(embed=embed, allowed_mentions=discord.AllowedMentions(users=True))
+
+
 @app.route("/")
 def home():
     return "Bot is running!"
