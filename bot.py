@@ -379,12 +379,19 @@ async def addplayer(interaction: discord.Interaction, player: discord.Member, ti
 async def removeplayer(interaction: discord.Interaction, player: discord.Member):
     name = str(player.id)
     display = player.display_name
-    if not get_player(name):
+    p = get_player(name)
+    if not p:
         await interaction.response.send_message(f"❌ **{display}** not found!", ephemeral=True)
         return
+    player_tier = p["tier"]
     conn = get_db()
     c = conn.cursor()
     c.execute("DELETE FROM players WHERE name = %s", (name,))
+    # Fix ranks in the tier after removal
+    c.execute("SELECT * FROM players WHERE tier = %s ORDER BY rank_in_tier ASC", (player_tier,))
+    remaining = [dict(p) for p in c.fetchall()]
+    for i, rp in enumerate(remaining):
+        c.execute("UPDATE players SET rank_in_tier = %s WHERE name = %s", (i + 1, rp["name"]))
     conn.commit()
     conn.close()
     await interaction.response.send_message(f"🗑️ **{display}** removed.")
@@ -652,10 +659,18 @@ async def updatetier(interaction: discord.Interaction, tier: str, remove_losers:
     for t in affected_tiers:
         c.execute("SELECT * FROM players WHERE tier = %s ORDER BY rank_in_tier ASC", (t,))
         tier_players = [dict(p) for p in c.fetchall()]
-        promoted_into = [name for name, nt in promo_list if nt == t]
-        demoted_into = [name for name, nt in demo_list if nt == t]
-        stayers = [p["name"] for p in tier_players if p["name"] not in promoted_into and p["name"] not in demoted_into]
-        ordered = demoted_into + stayers + promoted_into
+        promoted_into_names = [name for name, nt in promo_list if nt == t]
+        demoted_into_names = [name for name, nt in demo_list if nt == t]
+        stayers = [p["name"] for p in tier_players if p["name"] not in promoted_into_names and p["name"] not in demoted_into_names]
+        # Sort promoted players: best record first (most wins then fewest losses)
+        promoted_players = [p for p in players if p["name"] in promoted_into_names]
+        promoted_players.sort(key=lambda x: (-x["round_wins"], x["round_losses"]))
+        promoted_sorted = [p["name"] for p in promoted_players]
+        # Sort demoted players: worst record last
+        demoted_players = [p for p in players if p["name"] in demoted_into_names]
+        demoted_players.sort(key=lambda x: (-x["round_wins"], x["round_losses"]))
+        demoted_sorted = [p["name"] for p in demoted_players]
+        ordered = demoted_sorted + stayers + promoted_sorted
         for i, name in enumerate(ordered):
             c.execute("UPDATE players SET rank_in_tier = %s WHERE name = %s", (i + 1, name))
 
