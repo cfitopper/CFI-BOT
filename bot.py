@@ -159,7 +159,7 @@ def generate_ranked_banner(
     draw = ImageDraw.Draw(bg)
 
     try:
-        font_name = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 20)
+        font_name = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 18)
     except Exception:
         font_name = ImageFont.load_default()
 
@@ -176,9 +176,9 @@ def generate_ranked_banner(
         av = av.resize((size, size), Image.LANCZOS)
         return av
 
-    av_size = H - 20
-    pad     = 10
-    av_y    = 10
+    av_size = 180
+    pad     = 15
+    av_y    = (H - av_size) // 2
     left_x  = pad
     right_x = W - pad - av_size
 
@@ -191,25 +191,25 @@ def generate_ranked_banner(
     loser_av  = square_avatar(loser_avatar_bytes,  av_size)
 
     border = 5
-    draw.rectangle([left_x  - border, av_y - border, left_x  + av_size + border, av_y + av_size + border], outline=(80,  80,  255, 255), width=border)
+    draw.rectangle([left_x  - border, av_y - border, left_x  + av_size + border, av_y + av_size + border], outline=(80,  80, 255, 255), width=border)
     draw.rectangle([right_x - border, av_y - border, right_x + av_size + border, av_y + av_size + border], outline=(255, 170,  40, 255), width=border)
 
     bg.paste(winner_av, (left_x,  av_y), winner_av)
     bg.paste(loser_av,  (right_x, av_y), loser_av)
 
-    name_y = av_y + av_size - 30
+    name_y = av_y + av_size - 28
     draw.rectangle([left_x,  name_y, left_x  + av_size, av_y + av_size], fill=(0, 0, 0, 180))
     draw.rectangle([right_x, name_y, right_x + av_size, av_y + av_size], fill=(0, 0, 0, 180))
-    draw_centered(winner_name[:16], left_x  + av_size // 2, name_y + 7, font_name, (255, 255, 255, 255))
-    draw_centered(loser_name[:16],  right_x + av_size // 2, name_y + 7, font_name, (255, 255, 255, 255))
+    draw_centered(winner_name[:14], left_x  + av_size // 2, name_y + 6, font_name, (255, 255, 255, 255))
+    draw_centered(loser_name[:14],  right_x + av_size // 2, name_y + 6, font_name, (255, 255, 255, 255))
 
     score_text = f"{score_winner} - {score_loser}"
     chosen_font = ImageFont.load_default()
-    for size in range(220, 40, -5):
+    for size in range(250, 40, -5):
         try:
             f = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", size)
             bb = draw.textbbox((0, 0), score_text, font=f)
-            if bb[2] - bb[0] <= center_w - 20 and bb[3] - bb[1] <= H - 20:
+            if bb[2] - bb[0] <= center_w - 30 and bb[3] - bb[1] <= H - 20:
                 chosen_font = f
                 break
         except Exception:
