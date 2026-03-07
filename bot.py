@@ -153,44 +153,41 @@ def generate_ranked_banner(
     winner_avatar_bytes=None,
     loser_avatar_bytes=None,
 ) -> io.BytesIO:
-    bg = Image.open(BANNER_PATH).convert("RGBA")
-    W, H = bg.size  # 798 x 244
+    bg_orig = Image.open(BANNER_PATH).convert("RGBA")
+    W, H = 798, 400
+    bg = bg_orig.resize((W, H), Image.LANCZOS)
     draw = ImageDraw.Draw(bg)
 
     try:
-        font_score = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 130)
-        font_name  = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 16)
-        font_elo   = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 13)
-        font_rank  = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",      12)
+        font_score = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 200)
+        font_name  = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 22)
+        font_sub   = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",      18)
     except Exception:
-        font_score = font_name = font_elo = font_rank = ImageFont.load_default()
+        font_score = font_name = font_sub = ImageFont.load_default()
 
     def draw_centered(text, cx, y, font, color):
         bb = draw.textbbox((0, 0), text, font=font)
         tw = bb[2] - bb[0]
         draw.text((cx - tw // 2, y), text, font=font, fill=color)
 
-    def round_avatar(data, size: int) -> Image.Image:
+    def square_avatar(data, size: int) -> Image.Image:
         if data:
             av = Image.open(io.BytesIO(data)).convert("RGBA")
         else:
             av = Image.new("RGBA", (size, size), (90, 90, 90, 255))
         av = av.resize((size, size), Image.LANCZOS)
-        mask = Image.new("L", (size, size), 0)
-        ImageDraw.Draw(mask).ellipse((0, 0, size, size), fill=255)
-        av.putalpha(mask)
         return av
 
-    av_size  = 120
-    pad      = 14
-    av_y     = 8
+    av_size  = int(H * 0.72)
+    pad      = 10
+    av_y     = (H - av_size) // 2
     left_x   = pad
     right_x  = W - pad - av_size
     left_cx  = left_x + av_size // 2
     right_cx = right_x + av_size // 2
 
-    winner_av = round_avatar(winner_avatar_bytes, av_size)
-    loser_av  = round_avatar(loser_avatar_bytes,  av_size)
+    winner_av = square_avatar(winner_avatar_bytes, av_size)
+    loser_av  = square_avatar(loser_avatar_bytes,  av_size)
     bg.paste(winner_av, (left_x, av_y), winner_av)
     bg.paste(loser_av,  (right_x, av_y), loser_av)
 
@@ -198,21 +195,21 @@ def generate_ranked_banner(
     bb = draw.textbbox((0, 0), score_text, font=font_score)
     tw, th = bb[2] - bb[0], bb[3] - bb[1]
     sx = (W - tw) // 2
-    sy = (H - th) // 2 - 15
-    draw.text((sx + 3, sy + 3), score_text, font=font_score, fill=(0, 0, 0, 180))
+    sy = (H - th) // 2 - 20
+    draw.text((sx + 4, sy + 4), score_text, font=font_score, fill=(0, 0, 0, 180))
     draw.text((sx, sy),         score_text, font=font_score, fill=(255, 255, 255, 255))
 
-    name_y = av_y + av_size + 3
-    elo_y  = name_y + 18
-    rank_y = elo_y + 15
+    name_y = av_y + av_size + 6
+    elo_y  = name_y + 26
+    rank_y = elo_y + 22
 
     draw_centered(winner_name[:16], left_cx,  name_y, font_name, (255, 255, 255, 255))
-    draw_centered(f"{winner_elo} (+{elo_gain})", left_cx,  elo_y,  font_elo, (80,  230, 120, 255))
-    draw_centered(winner_rank,      left_cx,  rank_y, font_rank, (210, 210, 210, 255))
+    draw_centered(f"{winner_elo} (+{elo_gain})", left_cx,  elo_y,  font_sub, (80,  230, 120, 255))
+    draw_centered(winner_rank,      left_cx,  rank_y, font_sub, (200, 200, 200, 255))
 
     draw_centered(loser_name[:16],  right_cx, name_y, font_name, (255, 255, 255, 255))
-    draw_centered(f"{loser_elo} (-{elo_loss})",  right_cx, elo_y,  font_elo, (230,  80,  80, 255))
-    draw_centered(loser_rank,       right_cx, rank_y, font_rank, (210, 210, 210, 255))
+    draw_centered(f"{loser_elo} (-{elo_loss})",  right_cx, elo_y,  font_sub, (230,  80,  80, 255))
+    draw_centered(loser_rank,       right_cx, rank_y, font_sub, (200, 200, 200, 255))
 
     out = io.BytesIO()
     bg.save(out, format="PNG")
