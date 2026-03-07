@@ -1,4 +1,5 @@
 import discord
+import random
 from discord.ext import commands
 from discord import app_commands
 import os
@@ -1314,6 +1315,10 @@ async def on_ready():
     try:
         print(f"⏳ on_ready started for {bot.user}")
         setup_db()
+        # Setup ranked tables
+        conn_r = get_db()
+        setup_ranked_db(conn_r)
+        conn_r.close()
         print("📊 Database ready")
         print("👥 Skipping member cache preload")
         synced = await tree.sync()
@@ -1414,6 +1419,345 @@ async def log(interaction: discord.Interaction):
         lines.append(f"`{time_str}`{tier_str} {n1} {m['score1']} — {m['score2']} {n2}")
     embed.description = chr(10).join(lines)
     await interaction.followup.send(embed=embed)
+
+
+# ============================================================
+# RANKED SYSTEM ADDITION
+# ============================================================
+
+RANKED_RANKS = [
+    {"name": "Bronze",    "min": 0,    "max": 200},
+    {"name": "Silver",    "min": 200,  "max": 400},
+    {"name": "Gold",      "min": 400,  "max": 650},
+    {"name": "Elite",     "min": 650,  "max": 950},
+    {"name": "Emerald",   "min": 950,  "max": 1300},
+    {"name": "Emperor",   "min": 1300, "max": 1700},
+    {"name": "Supernova", "min": 1700, "max": 2150},
+    {"name": "Eternal",   "min": 2150, "max": 999999},
+]
+
+RANKED_K = 32
+
+def get_ranked_rank(elo):
+    for r in reversed(RANKED_RANKS):
+        if elo >= r["min"]:
+            return r["name"]
+    return "Bronze"
+
+def calc_elo(winner_elo, loser_elo):
+    expected_w = 1 / (1 + 10 ** ((loser_elo - winner_elo) / 400))
+    expected_l = 1 - expected_w
+    new_winner = round(winner_elo + RANKED_K * (1 - expected_w))
+    new_loser = round(loser_elo + RANKED_K * (0 - expected_l))
+    new_loser = max(0, new_loser)
+    gain = new_winner - winner_elo
+    loss = loser_elo - new_loser
+    return new_winner, new_loser, gain, loss
+
+def setup_ranked_db(conn):
+    c = conn.cursor()
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS ranked_players (
+            name TEXT PRIMARY KEY,
+            elo INTEGER DEFAULT 0,
+            wins INTEGER DEFAULT 0,
+            losses INTEGER DEFAULT 0
+        )
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS ranked_matches (
+            id SERIAL PRIMARY KEY,
+            player1 TEXT,
+            player2 TEXT,
+            score1 INTEGER,
+            score2 INTEGER,
+            elo_change INTEGER,
+            date TEXT
+        )
+    """)
+    conn.commit()
+
+# Pending ranked scores: {message_id: {player1, player2, score1, score2}}
+pending_ranked_scores = {}
+# Active matchmaking: {message_id: seeker_id}
+active_matchmaking = {}
+
+@tree.command(name="rankedregister", description="Register yourself for CFI Ranked")
+async def rankedregister(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    uid = str(interaction.user.id)
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT name FROM ranked_players WHERE name = %s", (uid,))
+    if c.fetchone():
+        conn.close()
+        await interaction.followup.send("❌ You are already registered for Ranked!", ephemeral=True)
+        return
+    c.execute("INSERT INTO ranked_players (name, elo, wins, losses) VALUES (%s, 0, 0, 0)", (uid,))
+    conn.commit()
+    conn.close()
+    await interaction.followup.send("✅ You are now registered for CFI Ranked! Starting Elo: **0** (Bronze)", ephemeral=True)
+
+@tree.command(name="rankedprofile", description="View your or another player's ranked profile")
+@app_commands.describe(player="Select a player (leave empty for yourself)")
+async def rankedprofile(interaction: discord.Interaction, player: discord.Member = None):
+    await interaction.response.defer()
+    target = player or interaction.user
+    uid = str(target.id)
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT * FROM ranked_players WHERE name = %s", (uid,))
+    p = c.fetchone()
+    if not p:
+        conn.close()
+        await interaction.followup.send(f"❌ **{target.display_name}** is not registered for Ranked!")
+        return
+    p = dict(p)
+    # Global rank position
+    c.execute("SELECT COUNT(*) as cnt FROM ranked_players WHERE elo > %s", (p["elo"],))
+    pos_row = c.fetchone()
+    global_pos = (pos_row["cnt"] if pos_row else 0) + 1
+    conn.close()
+
+    rank_name = get_ranked_rank(p["elo"])
+    total = p["wins"] + p["losses"]
+    winrate = round((p["wins"] / total * 100)) if total > 0 else 0
+
+    embed = discord.Embed(title=f"⚽ {target.display_name}", color=0xffaa00)
+    embed.set_thumbnail(url=target.display_avatar.url)
+    embed.description = (
+        f"**Rank:** {rank_name}\n"
+        f"**Elo:** {p['elo']} pts\n"
+        f"**Global Position:** #{global_pos}\n"
+        f"**Wins:** {p['wins']}\n"
+        f"**Losses:** {p['losses']}\n"
+        f"**Matches Played:** {total}\n"
+        f"**Winrate:** {winrate}%"
+    )
+    await interaction.followup.send(embed=embed)
+
+@tree.command(name="rankedleaderboard", description="Top 10 CFI Ranked players")
+async def rankedleaderboard(interaction: discord.Interaction):
+    await interaction.response.defer()
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT * FROM ranked_players ORDER BY elo DESC LIMIT 10")
+    players = [dict(p) for p in c.fetchall()]
+    conn.close()
+
+    if not players:
+        await interaction.followup.send("No ranked players yet!")
+        return
+
+    medals = ["🥇", "🥈", "🥉"]
+    embed = discord.Embed(title="🏆 CFI Ranked Leaderboard", color=0xFFD700)
+    lines = []
+    for i, p in enumerate(players):
+        member = interaction.guild.get_member(int(p["name"]))
+        name = member.display_name if member else p["name"]
+        medal = medals[i] if i < 3 else f"{i+1}."
+        rank_name = get_ranked_rank(p["elo"])
+        lines.append(f"{medal} **{name}** — {p['elo']} pts ({rank_name})")
+    embed.description = chr(10).join(lines)
+    await interaction.followup.send(embed=embed)
+
+@tree.command(name="rankedmatchmaking", description="Open anonymous matchmaking for Ranked")
+async def rankedmatchmaking(interaction: discord.Interaction):
+    await interaction.response.defer()
+    uid = str(interaction.user.id)
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT * FROM ranked_players WHERE name = %s", (uid,))
+    p = c.fetchone()
+    conn.close()
+    if not p:
+        await interaction.followup.send("❌ You are not registered for Ranked! Use /rankedregister first.", ephemeral=True)
+        return
+
+    p = dict(p)
+    rank_name = get_ranked_rank(p["elo"])
+
+    embed = discord.Embed(title="🕵️ Ranked Matchmaking", color=0x5865F2)
+    embed.description = (
+        "An **anonymous player** is looking for a match!\n"
+        f"**Hint:** {rank_name}\n\n"
+        "Click **Accept** to play!"
+    )
+
+    accept_btn = discord.ui.Button(label="Accept", style=discord.ButtonStyle.green, custom_id="ranked_accept")
+    cancel_btn = discord.ui.Button(label="Cancel", style=discord.ButtonStyle.red, custom_id="ranked_cancel")
+    view = discord.ui.View(timeout=300)
+    view.add_item(accept_btn)
+    view.add_item(cancel_btn)
+
+    msg = await interaction.followup.send(embed=embed, view=view)
+    active_matchmaking[msg.id] = uid
+
+@tree.command(name="rankedscore", description="Submit a ranked match score")
+@app_commands.describe(opponent="Your opponent", goals_you="Your goals", goals_opponent="Opponent goals")
+async def rankedscore(interaction: discord.Interaction, opponent: discord.Member, goals_you: int, goals_opponent: int):
+    await interaction.response.defer()
+    uid = str(interaction.user.id)
+    opp_uid = str(opponent.id)
+
+    if goals_you == goals_opponent:
+        await interaction.followup.send("❌ Draws are not allowed!")
+        return
+
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT * FROM ranked_players WHERE name = %s", (uid,))
+    p1 = c.fetchone()
+    c.execute("SELECT * FROM ranked_players WHERE name = %s", (opp_uid,))
+    p2 = c.fetchone()
+    conn.close()
+
+    if not p1:
+        await interaction.followup.send("❌ You are not registered for Ranked!", ephemeral=True)
+        return
+    if not p2:
+        await interaction.followup.send(f"❌ {opponent.display_name} is not registered for Ranked!")
+        return
+
+    embed = discord.Embed(title="⚽ Ranked Score Submission", color=0xff9900)
+    embed.description = (
+        f"**{interaction.user.display_name}** {goals_you} — {goals_opponent} **{opponent.display_name}**\n\n"
+        f"<@{opp_uid}> please confirm this score!"
+    )
+    embed.set_footer(text=f"Submitted by {interaction.user.display_name}")
+
+    confirm_btn = discord.ui.Button(label="✅ Confirm", style=discord.ButtonStyle.green, custom_id="ranked_confirm")
+    deny_btn = discord.ui.Button(label="❌ Deny", style=discord.ButtonStyle.red, custom_id="ranked_deny")
+    view = discord.ui.View(timeout=300)
+    view.add_item(confirm_btn)
+    view.add_item(deny_btn)
+
+    msg = await interaction.followup.send(embed=embed, view=view, allowed_mentions=discord.AllowedMentions(users=True))
+    pending_ranked_scores[msg.id] = {
+        "player1": uid,
+        "player2": opp_uid,
+        "score1": goals_you,
+        "score2": goals_opponent,
+        "submitter": uid
+    }
+
+
+@bot.event
+async def on_interaction(interaction: discord.Interaction):
+    if interaction.type != discord.InteractionType.component:
+        return
+
+    custom_id = interaction.data.get("custom_id", "")
+    uid = str(interaction.user.id)
+    msg_id = interaction.message.id
+
+    # ---- MATCHMAKING ACCEPT ----
+    if custom_id == "ranked_accept":
+        if msg_id not in active_matchmaking:
+            await interaction.response.send_message("❌ This matchmaking session has expired.", ephemeral=True)
+            return
+        seeker_id = active_matchmaking[msg_id]
+        if uid == seeker_id:
+            await interaction.response.send_message("❌ You can't accept your own matchmaking!", ephemeral=True)
+            return
+        conn = get_db()
+        c = conn.cursor()
+        c.execute("SELECT * FROM ranked_players WHERE name = %s", (uid,))
+        accepter = c.fetchone()
+        conn.close()
+        if not accepter:
+            await interaction.response.send_message("❌ You are not registered for Ranked!", ephemeral=True)
+            return
+
+        seeker = interaction.guild.get_member(int(seeker_id))
+        accepter_member = interaction.guild.get_member(int(uid))
+        host = random.choice([seeker, accepter_member])
+
+        del active_matchmaking[msg_id]
+        embed = discord.Embed(title="✅ Match Found!", color=0x00ff88)
+        embed.description = (
+            f"**{seeker.display_name if seeker else seeker_id}** vs **{accepter_member.display_name if accepter_member else uid}**\n\n"
+            f"🏠 **Host:** {host.display_name}\n\n"
+            f"Use `/rankedscore` when the match is done!"
+        )
+        await interaction.response.edit_message(embed=embed, view=None)
+
+
+    # ---- MATCHMAKING CANCEL ----
+    elif custom_id == "ranked_cancel":
+        if msg_id not in active_matchmaking:
+            await interaction.response.send_message("❌ This session has expired.", ephemeral=True)
+            return
+        if uid != active_matchmaking[msg_id]:
+            await interaction.response.send_message("❌ Only the person who opened matchmaking can cancel it.", ephemeral=True)
+            return
+        del active_matchmaking[msg_id]
+        await interaction.response.edit_message(content="❌ Matchmaking cancelled.", embed=None, view=None)
+
+    # ---- SCORE CONFIRM ----
+    elif custom_id == "ranked_confirm":
+        if msg_id not in pending_ranked_scores:
+            await interaction.response.send_message("❌ This score submission has expired.", ephemeral=True)
+            return
+        data = pending_ranked_scores[msg_id]
+        if uid != data["player2"]:
+            await interaction.response.send_message("❌ Only the opponent can confirm this score.", ephemeral=True)
+            return
+
+        p1_id = data["player1"]
+        p2_id = data["player2"]
+        s1 = data["score1"]
+        s2 = data["score2"]
+        winner_id = p1_id if s1 > s2 else p2_id
+        loser_id = p2_id if s1 > s2 else p1_id
+
+        conn = get_db()
+        c = conn.cursor()
+        c.execute("SELECT * FROM ranked_players WHERE name = %s", (winner_id,))
+        winner_data = dict(c.fetchone())
+        c.execute("SELECT * FROM ranked_players WHERE name = %s", (loser_id,))
+        loser_data = dict(c.fetchone())
+
+        new_winner_elo, new_loser_elo, gain, loss = calc_elo(winner_data["elo"], loser_data["elo"])
+
+        c.execute("UPDATE ranked_players SET elo = %s, wins = wins + 1 WHERE name = %s", (new_winner_elo, winner_id))
+        c.execute("UPDATE ranked_players SET elo = %s, losses = losses + 1 WHERE name = %s", (new_loser_elo, loser_id))
+        c.execute("""
+            INSERT INTO ranked_matches (player1, player2, score1, score2, elo_change, date)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, (p1_id, p2_id, s1, s2, gain, datetime.now().isoformat()))
+        conn.commit()
+        conn.close()
+
+        del pending_ranked_scores[msg_id]
+
+        winner_member = interaction.guild.get_member(int(winner_id))
+        loser_member = interaction.guild.get_member(int(loser_id))
+        winner_name = winner_member.display_name if winner_member else winner_id
+        loser_name = loser_member.display_name if loser_member else loser_id
+
+        winner_rank = get_ranked_rank(new_winner_elo)
+        loser_rank = get_ranked_rank(new_loser_elo)
+
+        embed = discord.Embed(title="✅ Ranked Score Confirmed!", color=0x00ff88)
+        embed.description = (
+            f"🏆 **{winner_name}** wins!\n\n"
+            f"**{winner_name}** — {new_winner_elo} pts ({winner_rank}) `+{gain}`\n"
+            f"**{loser_name}** — {new_loser_elo} pts ({loser_rank}) `-{loss}`"
+        )
+        await interaction.response.edit_message(embed=embed, view=None)
+
+    # ---- SCORE DENY ----
+    elif custom_id == "ranked_deny":
+        if msg_id not in pending_ranked_scores:
+            await interaction.response.send_message("❌ This score submission has expired.", ephemeral=True)
+            return
+        data = pending_ranked_scores[msg_id]
+        if uid != data["player2"]:
+            await interaction.response.send_message("❌ Only the opponent can deny this score.", ephemeral=True)
+            return
+        del pending_ranked_scores[msg_id]
+        await interaction.response.edit_message(content="❌ Score denied by opponent.", embed=None, view=None)
 
 
 @app.route("/")
