@@ -154,17 +154,14 @@ def generate_ranked_banner(
     loser_avatar_bytes=None,
 ) -> io.BytesIO:
     bg = Image.open(BANNER_PATH).convert("RGBA")
-    SCALE = 4
-    W = bg.size[0] * SCALE
-    H = bg.size[1] * SCALE
-    bg = bg.resize((W, H), Image.LANCZOS)
+    W, H = bg.size  # 798 x 244
     draw = ImageDraw.Draw(bg)
 
     try:
-        font_score = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 160)
-        font_name  = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 44)
-        font_elo   = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 36)
-        font_rank  = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",      32)
+        font_score = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 130)
+        font_name  = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 16)
+        font_elo   = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 13)
+        font_rank  = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",      12)
     except Exception:
         font_score = font_name = font_elo = font_rank = ImageFont.load_default()
 
@@ -184,9 +181,9 @@ def generate_ranked_banner(
         av.putalpha(mask)
         return av
 
-    av_size  = int(H * 0.52)
-    pad      = 70
-    av_y     = int(H * 0.04)
+    av_size  = 120
+    pad      = 14
+    av_y     = 8
     left_x   = pad
     right_x  = W - pad - av_size
     left_cx  = left_x + av_size // 2
@@ -197,23 +194,23 @@ def generate_ranked_banner(
     bg.paste(winner_av, (left_x, av_y), winner_av)
     bg.paste(loser_av,  (right_x, av_y), loser_av)
 
-    score_text = f"{score_winner}  -  {score_loser}"
+    score_text = f"{score_winner} - {score_loser}"
     bb = draw.textbbox((0, 0), score_text, font=font_score)
     tw, th = bb[2] - bb[0], bb[3] - bb[1]
     sx = (W - tw) // 2
-    sy = av_y + (av_size - th) // 2
-    draw.text((sx + 4, sy + 4), score_text, font=font_score, fill=(0, 0, 0, 160))
+    sy = (H - th) // 2 - 15
+    draw.text((sx + 3, sy + 3), score_text, font=font_score, fill=(0, 0, 0, 180))
     draw.text((sx, sy),         score_text, font=font_score, fill=(255, 255, 255, 255))
 
-    name_y = av_y + av_size + 10
-    elo_y  = name_y + 52
-    rank_y = elo_y + 42
+    name_y = av_y + av_size + 3
+    elo_y  = name_y + 18
+    rank_y = elo_y + 15
 
-    draw_centered(winner_name[:22], left_cx,  name_y, font_name, (255, 255, 255, 255))
+    draw_centered(winner_name[:16], left_cx,  name_y, font_name, (255, 255, 255, 255))
     draw_centered(f"{winner_elo} (+{elo_gain})", left_cx,  elo_y,  font_elo, (80,  230, 120, 255))
     draw_centered(winner_rank,      left_cx,  rank_y, font_rank, (210, 210, 210, 255))
 
-    draw_centered(loser_name[:22],  right_cx, name_y, font_name, (255, 255, 255, 255))
+    draw_centered(loser_name[:16],  right_cx, name_y, font_name, (255, 255, 255, 255))
     draw_centered(f"{loser_elo} (-{elo_loss})",  right_cx, elo_y,  font_elo, (230,  80,  80, 255))
     draw_centered(loser_rank,       right_cx, rank_y, font_rank, (210, 210, 210, 255))
 
