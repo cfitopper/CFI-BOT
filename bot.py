@@ -1514,9 +1514,9 @@ async def rankedprofile(interaction: discord.Interaction, player: discord.Member
         return
     p = dict(p)
     # Global rank position
-    c.execute("SELECT COUNT(*) as cnt FROM ranked_players WHERE elo > %s", (p["elo"],))
-    pos_row = c.fetchone()
-    global_pos = (pos_row["cnt"] if pos_row else 0) + 1
+    c.execute("SELECT name FROM ranked_players ORDER BY elo DESC, name ASC")
+    all_ranked = [dict(r) for r in c.fetchall()]
+    global_pos = next((i + 1 for i, r in enumerate(all_ranked) if r["name"] == uid), 1)
     conn.close()
 
     rank_name = get_ranked_rank(p["elo"])
@@ -1541,7 +1541,7 @@ async def rankedleaderboard(interaction: discord.Interaction):
     await interaction.response.defer()
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT * FROM ranked_players ORDER BY elo DESC LIMIT 10")
+    c.execute("SELECT * FROM ranked_players ORDER BY elo DESC, name ASC LIMIT 10")
     players = [dict(p) for p in c.fetchall()]
     conn.close()
 
@@ -1760,6 +1760,54 @@ async def on_interaction(interaction: discord.Interaction):
             return
         del pending_ranked_scores[msg_id]
         await interaction.response.edit_message(content="❌ Score denied by opponent.", embed=None, view=None)
+
+
+@tree.command(name="rankedsetstats", description="Manually update a player's ranked stats (admin only)")
+@is_admin()
+@app_commands.describe(
+    player="Select a player",
+    elo="New Elo points",
+    wins="New win count",
+    losses="New loss count"
+)
+async def rankedsetstats(interaction: discord.Interaction, player: discord.Member, elo: int = None, wins: int = None, losses: int = None):
+    uid = str(player.id)
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT * FROM ranked_players WHERE name = %s", (uid,))
+    p = c.fetchone()
+    if not p:
+        conn.close()
+        await interaction.response.send_message(f"❌ **{player.display_name}** is not registered for Ranked!", ephemeral=True)
+        return
+
+    updates = []
+    values = []
+    changed = []
+
+    if elo is not None:
+        updates.append("elo = %s")
+        values.append(max(0, elo))
+        changed.append(f"Elo: {max(0, elo)} ({get_ranked_rank(max(0, elo))})")
+    if wins is not None:
+        updates.append("wins = %s")
+        values.append(wins)
+        changed.append(f"Wins: {wins}")
+    if losses is not None:
+        updates.append("losses = %s")
+        values.append(losses)
+        changed.append(f"Losses: {losses}")
+
+    if not updates:
+        conn.close()
+        await interaction.response.send_message("❌ You didn't change anything!", ephemeral=True)
+        return
+
+    values.append(uid)
+    c.execute(f"UPDATE ranked_players SET {', '.join(updates)} WHERE name = %s", values)
+    conn.commit()
+    conn.close()
+    await interaction.response.send_message(f"✅ Updated **{player.display_name}**: {' | '.join(changed)}")
 
 
 @app.route("/")
