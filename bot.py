@@ -154,14 +154,15 @@ def generate_ranked_banner(
     loser_avatar_bytes=None,
 ) -> io.BytesIO:
     bg_orig = Image.open(BANNER_PATH).convert("RGBA")
-    W, H = 820, 280
+    W, H = 1200, 500
     bg = bg_orig.resize((W, H), Image.LANCZOS)
     draw = ImageDraw.Draw(bg)
 
     try:
-        font_name = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 16)
+        font_score = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 400)
+        font_name  = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 20)
     except Exception:
-        font_name = ImageFont.load_default()
+        font_score = font_name = ImageFont.load_default()
 
     def draw_centered(text, cx, y, font, color):
         bb = draw.textbbox((0, 0), text, font=font)
@@ -174,15 +175,13 @@ def generate_ranked_banner(
             av = Image.new("RGBA", (size, size), (80, 80, 80, 255))
         return av.resize((size, size), Image.LANCZOS)
 
-    av_size  = 160
-    pad      = 8
+    av_size  = 180
+    pad      = 12
     av_y     = (H - av_size) // 2
     left_x   = pad
     right_x  = W - pad - av_size
     left_cx  = left_x + av_size // 2
     right_cx = right_x + av_size // 2
-    center_x = (left_x + av_size + right_x) // 2
-    center_w = right_x - (left_x + av_size)
 
     winner_av = square_avatar(winner_avatar_bytes, av_size)
     loser_av  = square_avatar(loser_avatar_bytes,  av_size)
@@ -193,30 +192,19 @@ def generate_ranked_banner(
     bg.paste(winner_av, (left_x,  av_y), winner_av)
     bg.paste(loser_av,  (right_x, av_y), loser_av)
 
-    name_y = av_y + av_size - 24
+    name_y = av_y + av_size - 28
     draw.rectangle([left_x,  name_y, left_x  + av_size, av_y + av_size], fill=(0, 0, 0, 180))
     draw.rectangle([right_x, name_y, right_x + av_size, av_y + av_size], fill=(0, 0, 0, 180))
-    draw_centered(winner_name[:14], left_cx,  name_y + 5, font_name, (255, 255, 255, 255))
-    draw_centered(loser_name[:14],  right_cx, name_y + 5, font_name, (255, 255, 255, 255))
+    draw_centered(winner_name[:14], left_cx,  name_y + 6, font_name, (255, 255, 255, 255))
+    draw_centered(loser_name[:14],  right_cx, name_y + 6, font_name, (255, 255, 255, 255))
 
-    score_text   = f"{score_winner} - {score_loser}"
-    chosen_font  = ImageFont.load_default()
-    for size in range(250, 20, -1):
-        try:
-            f  = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", size)
-            bb = draw.textbbox((0, 0), score_text, font=f)
-            if bb[2] - bb[0] <= center_w - 10 and bb[3] - bb[1] <= H - 10:
-                chosen_font = f
-                break
-        except Exception:
-            break
-
-    bb = draw.textbbox((0, 0), score_text, font=chosen_font)
+    score_text = f"{score_winner} - {score_loser}"
+    bb = draw.textbbox((0, 0), score_text, font=font_score)
     tw, th = bb[2] - bb[0], bb[3] - bb[1]
-    sx = center_x - tw // 2
+    sx = (W - tw) // 2
     sy = (H - th) // 2 - 5
-    draw.text((sx + 4, sy + 4), score_text, font=chosen_font, fill=(0, 0, 0, 180))
-    draw.text((sx, sy),         score_text, font=chosen_font, fill=(255, 255, 255, 255))
+    draw.text((sx + 5, sy + 5), score_text, font=font_score, fill=(0, 0, 0, 180))
+    draw.text((sx, sy),         score_text, font=font_score, fill=(255, 255, 255, 255))
 
     out = io.BytesIO()
     bg.save(out, format="PNG")
