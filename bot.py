@@ -75,9 +75,16 @@ def setup_db():
             player2 TEXT,
             score1 INTEGER,
             score2 INTEGER,
-            date TEXT
+            date TEXT,
+            tier TEXT
         )
     """)
+    # Migration: add tier column if not exists
+    try:
+        c.execute("ALTER TABLE matches ADD COLUMN tier TEXT")
+        conn.commit()
+    except Exception:
+        conn.rollback()
     # Clean up all name formats to raw numeric ID
     try:
         c.execute("SELECT name FROM players")
@@ -440,9 +447,10 @@ async def score(interaction: discord.Interaction, player1: discord.Member, goals
 
     conn = get_db()
     c = conn.cursor()
+    match_tier = p1["tier"]
     c.execute(
-        "INSERT INTO matches (player1, player2, score1, score2, date) VALUES (%s, %s, %s, %s, %s)",
-        (name1, name2, goals1, goals2, datetime.now().isoformat())
+        "INSERT INTO matches (player1, player2, score1, score2, date, tier) VALUES (%s, %s, %s, %s, %s, %s)",
+        (name1, name2, goals1, goals2, datetime.now().isoformat(), match_tier)
     )
 
     # Check if tier counts for golden boot
@@ -629,14 +637,14 @@ async def updatetier(interaction: discord.Interaction, tier: str, remove_losers:
                     (new_tier, name)
                 )
                 promo_list.append((name, new_tier))
-                results.append(f"🎉 <@{get_uid(name)}> → **{new_tier}** (pending)")
+                results.append(f"🎉 {get_display(interaction.guild, get_uid(name))} → **{new_tier}** (pending)")
             else:
-                results.append(f"🏅 <@{get_uid(name)}> is already in the highest tier!")
+                results.append(f"🏅 {get_display(interaction.guild, get_uid(name))} is already in the highest tier!")
         elif rl >= 2:
             if remove_losers:
                 c.execute("DELETE FROM players WHERE name = %s", (name,))
                 removed_list.append(name)
-                results.append(f"🚫 <@{get_uid(name)}> removed from the competition")
+                results.append(f"🚫 {get_display(interaction.guild, get_uid(name))} removed from the competition")
             else:
                 current_idx = tier_index(p["tier"])
                 if current_idx < len(TIERS) - 1:
@@ -646,13 +654,13 @@ async def updatetier(interaction: discord.Interaction, tier: str, remove_losers:
                         (new_tier, name)
                     )
                     demo_list.append((name, new_tier))
-                    results.append(f"📉 <@{get_uid(name)}> → **{new_tier}** (pending)")
+                    results.append(f"📉 {get_display(interaction.guild, get_uid(name))} → **{new_tier}** (pending)")
                 else:
                     c.execute("DELETE FROM players WHERE name = %s", (name,))
                     removed_list.append(name)
-                    results.append(f"🚫 <@{get_uid(name)}> removed from the system (bottom of Bronze)")
+                    results.append(f"🚫 {get_display(interaction.guild, get_uid(name))} removed from the system (bottom of Bronze)")
         else:
-            results.append(f"➡️ <@{get_uid(name)}>: {rw}W / {rl}L — no change")
+            results.append(f"➡️ {get_display(interaction.guild, get_uid(name))}: {rw}W / {rl}L — no change")
 
     # Fix ranks in affected tiers (excluding removed players)
     affected_tiers = set([tier] + [t for _, t in promo_list] + [t for _, t in demo_list])
@@ -905,7 +913,7 @@ async def updateall(interaction: discord.Interaction):
                 "UPDATE players SET round_wins = 0, round_losses = 0, round_done = 0 WHERE name = %s",
                 (name,)
             )
-            none_list.append(f"➡️ <@{name}>")
+            none_list.append(f"➡️ {get_display(interaction.guild, get_uid(name))}")
 
     conn.commit()
 
@@ -944,11 +952,11 @@ async def updateall(interaction: discord.Interaction):
     embed = discord.Embed(title="🔄 Full Ranking Update", color=0xff9900)
 
     if promo_list:
-        chunks = make_chunks([f"🎉 <@{n}> → **{t}**" for n, t in promo_list])
+        chunks = make_chunks([f"🎉 {get_display(interaction.guild, get_uid(n))} → **{t}**" for n, t in promo_list])
         for i, chunk in enumerate(chunks):
             embed.add_field(name="🎉 Promotions" if i == 0 else "​", value=chunk, inline=False)
     if demo_list:
-        chunks = make_chunks([f"📉 <@{n}> → **{t}**" for n, t in demo_list])
+        chunks = make_chunks([f"📉 {get_display(interaction.guild, get_uid(n))} → **{t}**" for n, t in demo_list])
         for i, chunk in enumerate(chunks):
             embed.add_field(name="📉 Demotions" if i == 0 else "​", value=chunk, inline=False)
     if none_list:
@@ -1061,7 +1069,8 @@ async def setgoalsgoldenboot(interaction: discord.Interaction, player: discord.M
     c.execute("UPDATE players SET golden_boot_goals = %s WHERE name = %s", (goals, uid))
     conn.commit()
     conn.close()
-    await interaction.followup.send(f"✅ Golden Boot goals for <@{uid}> set to **{goals}**!", allowed_mentions=discord.AllowedMentions(users=True))
+    name_display = get_display(interaction.guild, uid)
+    await interaction.followup.send(f"✅ Golden Boot goals for **{name_display}** set to **{goals}**!")
 
 @tree.command(name="goldenboot", description="Top 5 CFI Golden Boot scorers")
 @is_admin()
@@ -1197,7 +1206,7 @@ async def setstats(interaction: discord.Interaction, player: discord.Member,
     if licensed is not None: changed.append(f"Licensed: {licensed}")
     if playstyle is not None: changed.append(f"Playstyle: {playstyle}")
 
-    await interaction.response.send_message(f"✅ Updated <@{uid}>: {' | '.join(changed)}")
+    await interaction.response.send_message(f"✅ Updated **{display}**: {' | '.join(changed)}")
 
 
 @tree.command(name="removeandfill", description="Remove a player and cascade ranks down through all tiers (admin only)")
@@ -1265,7 +1274,7 @@ async def removeandfill(interaction: discord.Interaction, player: discord.Member
         conn.commit()
         conn.close()
 
-        log.append(f"⬆️ <@{promoted['name']}> moved from **{next_tier}** rank 1 → **{current_tier}** rank {new_rank}")
+        log.append(f"⬆️ {get_display(interaction.guild, get_uid(promoted['name']))} moved from **{next_tier}** rank 1 → **{current_tier}** rank {new_rank}")
 
         # Re-rank next tier
         players_in_next = get_tier_players(next_tier)
@@ -1315,7 +1324,7 @@ from threading import Thread
 
 app = Flask(__name__)
 
-@tree.command(name="showscores", description="Show total stats for all players in a tier")
+@tree.command(name="showscores", description="Show matches and stats for a tier")
 @is_admin()
 @app_commands.describe(tier="Select a tier")
 @app_commands.autocomplete(tier=tier_autocomplete)
@@ -1327,19 +1336,52 @@ async def showscores(interaction: discord.Interaction, tier: str):
         return
     conn = get_db()
     c = conn.cursor()
+    c.execute("SELECT * FROM matches WHERE tier = %s ORDER BY date ASC", (tier,))
+    matches = [dict(m) for m in c.fetchall()]
     c.execute("SELECT * FROM players WHERE tier = %s ORDER BY rank_in_tier ASC", (tier,))
     players = [dict(p) for p in c.fetchall()]
     conn.close()
-    if not players:
-        await interaction.followup.send(f"❌ No players found in **{tier}**!")
-        return
-    embed = discord.Embed(title=f"📊 Scores — {tier}", color=0x00ff88)
-    lines = []
-    for p in players:
-        uid = get_uid(p["name"])
-        lines.append(f"<@{uid}> — W: {p['wins']} | L: {p['losses']} | Goals: {p['goals']}")
-    embed.description = chr(10).join(lines)
-    await interaction.followup.send(embed=embed, allowed_mentions=discord.AllowedMentions(users=True))
+
+    def get_display(uid):
+        member = interaction.guild.get_member(int(uid))
+        return member.display_name if member else uid
+
+    embed = discord.Embed(title=f"📊 {tier} — Match Overview", color=0x00ff88)
+
+    # Match list
+    if matches:
+        match_lines = []
+        for m in matches:
+            n1 = get_display(m["player1"])
+            n2 = get_display(m["player2"])
+            match_lines.append(f"{n1} {m['score1']} — {m['score2']} {n2}")
+        embed.add_field(name="⚽ Matches", value=chr(10).join(match_lines), inline=False)
+
+    # Per-player summary from matches in this tier
+    stats = {}
+    for m in matches:
+        for uid, goals_for, goals_against, won in [
+            (m["player1"], m["score1"], m["score2"], int(str(m["score1"])) > int(str(m["score2"]))),
+            (m["player2"], m["score2"], m["score1"], int(str(m["score2"])) > int(str(m["score1"])))
+        ]:
+            if uid not in stats:
+                stats[uid] = {"w": 0, "l": 0, "goals": 0}
+            if won:
+                stats[uid]["w"] += 1
+            else:
+                stats[uid]["l"] += 1
+            stats[uid]["goals"] += int(str(goals_for))
+
+    if stats:
+        summary_lines = []
+        for p in players:
+            uid = get_uid(p["name"])
+            name = get_display(uid)
+            s = stats.get(uid, {"w": 0, "l": 0, "goals": 0})
+            summary_lines.append(f"{name} — W: {s['w']} | L: {s['l']} | Goals: {s['goals']}")
+        embed.add_field(name="📈 Summary", value=chr(10).join(summary_lines), inline=False)
+
+    await interaction.followup.send(embed=embed)
 
 @tree.command(name="log", description="View bot activity log for today (admin only)")
 @is_admin()
@@ -1360,12 +1402,15 @@ async def log(interaction: discord.Interaction):
     embed = discord.Embed(title=f"📋 Bot Log — {today}", color=0x5865F2)
     lines = []
     for m in matches:
-        uid1 = m["player1"]
-        uid2 = m["player2"]
+        member1 = interaction.guild.get_member(int(m["player1"]))
+        member2 = interaction.guild.get_member(int(m["player2"]))
+        n1 = member1.display_name if member1 else m["player1"]
+        n2 = member2.display_name if member2 else m["player2"]
         time_str = m["date"][11:16] if m["date"] else "?"
-        lines.append(f"`{time_str}` <@{uid1}> {m['score1']} — {m['score2']} <@{uid2}>")
+        tier_str = f" ({m['tier']})" if m.get("tier") else ""
+        lines.append(f"`{time_str}`{tier_str} {n1} {m['score1']} — {m['score2']} {n2}")
     embed.description = chr(10).join(lines)
-    await interaction.followup.send(embed=embed, allowed_mentions=discord.AllowedMentions(users=True))
+    await interaction.followup.send(embed=embed)
 
 
 @app.route("/")
