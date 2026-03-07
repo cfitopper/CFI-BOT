@@ -155,18 +155,15 @@ def generate_ranked_banner(
 ) -> io.BytesIO:
     bg = Image.open(BANNER_PATH).convert("RGBA")
     W, H = bg.size  # 798 x 244
-
-    SCALE = 3
-    W2, H2 = W * SCALE, H * SCALE
-    bg = bg.resize((W2, H2), Image.LANCZOS)
     draw = ImageDraw.Draw(bg)
 
     try:
-        font_big   = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 94)
-        font_med   = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 44)
-        font_small = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 36)
+        font_score = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 72)
+        font_name  = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 18)
+        font_elo   = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 15)
+        font_rank  = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 13)
     except Exception:
-        font_big = font_med = font_small = ImageFont.load_default()
+        font_score = font_name = font_elo = font_rank = ImageFont.load_default()
 
     def draw_centered(text, cx, y, font, color):
         bb = draw.textbbox((0, 0), text, font=font)
@@ -184,11 +181,11 @@ def generate_ranked_banner(
         av.putalpha(mask)
         return av
 
-    av_size  = int(170 * SCALE / 2.2)
-    pad      = int(38 * SCALE / 2)
+    av_size  = 130
+    pad      = 22
+    av_y     = (H - av_size) // 2 - 18
     left_x   = pad
-    right_x  = W2 - pad - av_size
-    av_y     = int((H2 - av_size) / 2) - int(35 * SCALE / 2)
+    right_x  = W - pad - av_size
     left_cx  = left_x + av_size // 2
     right_cx = right_x + av_size // 2
 
@@ -197,25 +194,25 @@ def generate_ranked_banner(
     bg.paste(winner_av, (left_x, av_y), winner_av)
     bg.paste(loser_av,  (right_x, av_y), loser_av)
 
-    score_text = f"{score_winner}  -  {score_loser}"
-    bb = draw.textbbox((0, 0), score_text, font=font_big)
+    score_text = f"{score_winner} - {score_loser}"
+    bb = draw.textbbox((0, 0), score_text, font=font_score)
     tw, th = bb[2] - bb[0], bb[3] - bb[1]
-    sx = (W2 - tw) // 2
-    sy = (H2 - th) // 2 - int(45 * SCALE / 2)
-    draw.text((sx + 3, sy + 3), score_text, font=font_big, fill=(0, 0, 0, 160))
-    draw.text((sx, sy),         score_text, font=font_big, fill=(255, 255, 255, 255))
+    sx = (W - tw) // 2
+    sy = (H - th) // 2 - 12
+    draw.text((sx + 2, sy + 2), score_text, font=font_score, fill=(0, 0, 0, 140))
+    draw.text((sx, sy),         score_text, font=font_score, fill=(255, 255, 255, 255))
 
-    name_y = av_y + av_size + int(12 * SCALE / 2)
-    elo_y  = name_y + int(52 * SCALE / 2)
-    rank_y = elo_y  + int(42 * SCALE / 2)
+    name_y = av_y + av_size + 5
+    elo_y  = name_y + 20
+    rank_y = elo_y + 17
 
-    draw_centered(winner_name[:14],              left_cx,  name_y, font_med,   (255, 255, 255, 255))
-    draw_centered(f"{winner_elo} (+{elo_gain})", left_cx,  elo_y,  font_small, (80,  230, 120, 255))
-    draw_centered(winner_rank,                   left_cx,  rank_y, font_small, (210, 210, 210, 255))
+    draw_centered(winner_name[:16], left_cx,  name_y, font_name, (255, 255, 255, 255))
+    draw_centered(f"{winner_elo} (+{elo_gain})", left_cx,  elo_y,  font_elo, (80,  230, 120, 255))
+    draw_centered(winner_rank,      left_cx,  rank_y, font_rank, (210, 210, 210, 255))
 
-    draw_centered(loser_name[:14],               right_cx, name_y, font_med,   (255, 255, 255, 255))
-    draw_centered(f"{loser_elo} (-{elo_loss})",  right_cx, elo_y,  font_small, (230,  80,  80, 255))
-    draw_centered(loser_rank,                    right_cx, rank_y, font_small, (210, 210, 210, 255))
+    draw_centered(loser_name[:16],  right_cx, name_y, font_name, (255, 255, 255, 255))
+    draw_centered(f"{loser_elo} (-{elo_loss})",  right_cx, elo_y,  font_elo, (230,  80,  80, 255))
+    draw_centered(loser_rank,       right_cx, rank_y, font_rank, (210, 210, 210, 255))
 
     out = io.BytesIO()
     bg.save(out, format="PNG")
@@ -1790,16 +1787,8 @@ async def on_interaction(interaction: discord.Interaction):
         winner_rank = get_ranked_rank(new_winner_elo)
         loser_rank  = get_ranked_rank(new_loser_elo)
 
-        # ── confirm embed (edit original message) ────────────────
-        embed = discord.Embed(title="✅ Ranked Score Confirmed!", color=0x00ff88)
-        embed.description = (
-            f"🏆 **{winner_name}** wins!\n\n"
-            f"**{winner_name}** — {new_winner_elo} pts ({winner_rank}) `+{gain}`\n"
-            f"**{loser_name}** — {new_loser_elo} pts ({loser_rank}) `-{loss}`"
-        )
-        await interaction.response.edit_message(embed=embed, view=None)
-
-        # ── generate and send banner ──────────────────────────────
+        # ── generate banner and send everything in one message ──
+        banner_file = None
         try:
             async with aiohttp.ClientSession() as session:
                 winner_av_bytes = await fetch_avatar(
@@ -1825,12 +1814,21 @@ async def on_interaction(interaction: discord.Interaction):
                 winner_avatar_bytes=winner_av_bytes,
                 loser_avatar_bytes=loser_av_bytes,
             )
-
-            await interaction.followup.send(
-                file=discord.File(banner_io, filename="ranked_result.png")
-            )
+            banner_file = discord.File(banner_io, filename="ranked_result.png")
         except Exception as e:
             print(f"Banner generation error: {e}")
+
+        embed = discord.Embed(title="✅ Ranked Score Confirmed!", color=0x00ff88)
+        embed.description = (
+            f"🏆 **{winner_name}** wins!\n\n"
+            f"**{winner_name}** — {new_winner_elo} pts ({winner_rank}) `+{gain}`\n"
+            f"**{loser_name}** — {new_loser_elo} pts ({loser_rank}) `-{loss}`"
+        )
+        if banner_file:
+            embed.set_image(url="attachment://ranked_result.png")
+            await interaction.response.edit_message(embed=embed, attachments=[banner_file], view=None)
+        else:
+            await interaction.response.edit_message(embed=embed, view=None)
 
     # ---- SCORE DENY ----
     elif custom_id == "ranked_deny":
