@@ -176,7 +176,7 @@ def generate_ranked_banner(
         av = av.resize((size, size), Image.LANCZOS)
         return av
 
-    av_size = 130
+    av_size = 80
     pad     = 8
     av_y    = (H - av_size) // 2
     left_x  = pad
@@ -197,11 +197,11 @@ def generate_ranked_banner(
     bg.paste(winner_av, (left_x,  av_y), winner_av)
     bg.paste(loser_av,  (right_x, av_y), loser_av)
 
-    name_y = av_y + av_size - 22
+    name_y = av_y + av_size - 18
     draw.rectangle([left_x,  name_y, left_x  + av_size, av_y + av_size], fill=(0, 0, 0, 180))
     draw.rectangle([right_x, name_y, right_x + av_size, av_y + av_size], fill=(0, 0, 0, 180))
-    draw_centered(winner_name[:12], left_x  + av_size // 2, name_y + 5, font_name, (255, 255, 255, 255))
-    draw_centered(loser_name[:12],  right_x + av_size // 2, name_y + 5, font_name, (255, 255, 255, 255))
+    draw_centered(winner_name[:10], left_x  + av_size // 2, name_y + 3, font_name, (255, 255, 255, 255))
+    draw_centered(loser_name[:10],  right_x + av_size // 2, name_y + 3, font_name, (255, 255, 255, 255))
 
     score_text = f"{score_winner} - {score_loser}"
     chosen_font = ImageFont.load_default()
