@@ -154,62 +154,58 @@ def generate_ranked_banner(
     loser_avatar_bytes=None,
 ) -> io.BytesIO:
     bg_orig = Image.open(BANNER_PATH).convert("RGBA")
-    W, H = 800, 400
+    W, H = 820, 280
     bg = bg_orig.resize((W, H), Image.LANCZOS)
     draw = ImageDraw.Draw(bg)
 
     try:
-        font_name = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 22)
+        font_name = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 16)
     except Exception:
         font_name = ImageFont.load_default()
 
     def draw_centered(text, cx, y, font, color):
         bb = draw.textbbox((0, 0), text, font=font)
-        tw = bb[2] - bb[0]
-        draw.text((cx - tw // 2, y), text, font=font, fill=color)
+        draw.text((cx - (bb[2] - bb[0]) // 2, y), text, font=font, fill=color)
 
     def square_avatar(data, size: int) -> Image.Image:
         if data:
             av = Image.open(io.BytesIO(data)).convert("RGBA")
         else:
             av = Image.new("RGBA", (size, size), (80, 80, 80, 255))
-        av = av.resize((size, size), Image.LANCZOS)
-        return av
+        return av.resize((size, size), Image.LANCZOS)
 
-    av_size = 200
-    pad     = 15
-    av_y    = (H - av_size) // 2
-    left_x  = pad
-    right_x = W - pad - av_size
-
-    center_start = left_x + av_size
-    center_end   = right_x
-    center_w     = center_end - center_start
-    center_x     = center_start + center_w // 2
+    av_size  = 160
+    pad      = 8
+    av_y     = (H - av_size) // 2
+    left_x   = pad
+    right_x  = W - pad - av_size
+    left_cx  = left_x + av_size // 2
+    right_cx = right_x + av_size // 2
+    center_x = (left_x + av_size + right_x) // 2
+    center_w = right_x - (left_x + av_size)
 
     winner_av = square_avatar(winner_avatar_bytes, av_size)
     loser_av  = square_avatar(loser_avatar_bytes,  av_size)
 
-    border = 6
+    border = 5
     draw.rectangle([left_x  - border, av_y - border, left_x  + av_size + border, av_y + av_size + border], outline=(80,  80, 255, 255), width=border)
     draw.rectangle([right_x - border, av_y - border, right_x + av_size + border, av_y + av_size + border], outline=(255, 170,  40, 255), width=border)
-
     bg.paste(winner_av, (left_x,  av_y), winner_av)
     bg.paste(loser_av,  (right_x, av_y), loser_av)
 
-    name_y = av_y + av_size - 30
+    name_y = av_y + av_size - 24
     draw.rectangle([left_x,  name_y, left_x  + av_size, av_y + av_size], fill=(0, 0, 0, 180))
     draw.rectangle([right_x, name_y, right_x + av_size, av_y + av_size], fill=(0, 0, 0, 180))
-    draw_centered(winner_name[:16], left_x  + av_size // 2, name_y + 7, font_name, (255, 255, 255, 255))
-    draw_centered(loser_name[:16],  right_x + av_size // 2, name_y + 7, font_name, (255, 255, 255, 255))
+    draw_centered(winner_name[:14], left_cx,  name_y + 5, font_name, (255, 255, 255, 255))
+    draw_centered(loser_name[:14],  right_cx, name_y + 5, font_name, (255, 255, 255, 255))
 
-    score_text = f"{score_winner} - {score_loser}"
-    chosen_font = ImageFont.load_default()
-    for size in range(300, 40, -2):
+    score_text   = f"{score_winner} - {score_loser}"
+    chosen_font  = ImageFont.load_default()
+    for size in range(250, 20, -1):
         try:
-            f = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", size)
+            f  = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", size)
             bb = draw.textbbox((0, 0), score_text, font=f)
-            if bb[2] - bb[0] <= center_w - 20 and bb[3] - bb[1] <= H - 20:
+            if bb[2] - bb[0] <= center_w - 10 and bb[3] - bb[1] <= H - 10:
                 chosen_font = f
                 break
         except Exception:
@@ -1834,9 +1830,11 @@ async def on_interaction(interaction: discord.Interaction):
             f"**{loser_name}**\n"
             f"**Elo:** {new_loser_elo} pts ({loser_rank}) `-{loss}`"
         )
-        await interaction.response.edit_message(embed=embed, view=None)
         if banner_file:
-            await interaction.followup.send(file=banner_file)
+            embed.set_image(url="attachment://ranked_result.png")
+            await interaction.response.edit_message(embed=embed, attachments=[banner_file], view=None)
+        else:
+            await interaction.response.edit_message(embed=embed, view=None)
 
     # ---- SCORE DENY ----
     elif custom_id == "ranked_deny":
