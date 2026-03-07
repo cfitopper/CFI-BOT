@@ -154,7 +154,7 @@ def generate_ranked_banner(
     loser_avatar_bytes=None,
 ) -> io.BytesIO:
     bg_orig = Image.open(BANNER_PATH).convert("RGBA")
-    W, H = 520, 200
+    W, H = 520, 350
     bg = bg_orig.resize((W, H), Image.LANCZOS)
     draw = ImageDraw.Draw(bg)
 
@@ -182,11 +182,6 @@ def generate_ranked_banner(
     left_x  = pad
     right_x = W - pad - av_size
 
-    center_start = left_x + av_size
-    center_end   = right_x
-    center_w     = center_end - center_start
-    center_x     = center_start + center_w // 2
-
     winner_av = square_avatar(winner_avatar_bytes, av_size)
     loser_av  = square_avatar(loser_avatar_bytes,  av_size)
 
@@ -205,11 +200,11 @@ def generate_ranked_banner(
 
     score_text = f"{score_winner} - {score_loser}"
     chosen_font = ImageFont.load_default()
-    for size in range(180, 40, -2):
+    for size in range(300, 40, -2):
         try:
             f = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", size)
             bb = draw.textbbox((0, 0), score_text, font=f)
-            if bb[2] - bb[0] <= center_w - 10 and bb[3] - bb[1] <= H - 10:
+            if bb[2] - bb[0] <= W - 20 and bb[3] - bb[1] <= H - 20:
                 chosen_font = f
                 break
         except Exception:
@@ -217,9 +212,9 @@ def generate_ranked_banner(
 
     bb = draw.textbbox((0, 0), score_text, font=chosen_font)
     tw, th = bb[2] - bb[0], bb[3] - bb[1]
-    sx = center_x - tw // 2
+    sx = (W - tw) // 2
     sy = (H - th) // 2 - 5
-    draw.text((sx + 3, sy + 3), score_text, font=chosen_font, fill=(0, 0, 0, 180))
+    draw.text((sx + 4, sy + 4), score_text, font=chosen_font, fill=(0, 0, 0, 180))
     draw.text((sx, sy),         score_text, font=chosen_font, fill=(255, 255, 255, 255))
 
     out = io.BytesIO()
