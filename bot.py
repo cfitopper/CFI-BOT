@@ -1,11 +1,14 @@
 import discord
 import random
+import aiohttp
 from discord.ext import commands
 from discord import app_commands
 import os
 from datetime import datetime
 import psycopg2
 from psycopg2.extras import RealDictCursor
+import io
+from PIL import Image, ImageDraw, ImageFont
 
 # ─────────────────────────────────────────
 # SETTINGS
@@ -13,6 +16,7 @@ from psycopg2.extras import RealDictCursor
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 ADMIN_ROLES = ["Admin", "CFI - Dev", "BOSS", "Head-moderator (crew)"]
 ANNOUNCEMENT_CHANNEL_ID = 0
+BANNER_PATH = os.path.join(os.path.dirname(__file__), "cfi_banner.png")
 # ─────────────────────────────────────────
 
 GOLDEN_BOOT_TIERS = [
@@ -80,13 +84,11 @@ def setup_db():
             tier TEXT
         )
     """)
-    # Migration: add tier column if not exists
     try:
         c.execute("ALTER TABLE matches ADD COLUMN tier TEXT")
         conn.commit()
     except Exception:
         conn.rollback()
-    # Clean up all name formats to raw numeric ID
     try:
         c.execute("SELECT name FROM players")
         all_names = c.fetchall()
@@ -100,7 +102,6 @@ def setup_db():
         print(f"Migration cleanup error: {e}")
         conn.rollback()
 
-    # Add pending column if it doesn't exist yet
     try:
         c.execute("ALTER TABLE players ADD COLUMN pending INTEGER DEFAULT 0")
         conn.commit()
@@ -113,7 +114,6 @@ def setup_db():
     except Exception:
         conn.rollback()
 
-    # Add new columns if they don't exist yet (migration)
     try:
         c.execute("ALTER TABLE players ADD COLUMN licensed TEXT DEFAULT 'No'")
         conn.commit()
@@ -125,6 +125,102 @@ def setup_db():
     except Exception:
         conn.rollback()
     conn.close()
+
+# ─────────────────────────────────────────
+# BANNER GENERATOR
+# ─────────────────────────────────────────
+async def fetch_avatar(session: aiohttp.ClientSession, url: str):
+    try:
+        async with session.get(str(url)) as resp:
+            if resp.status == 200:
+                return await resp.read()
+    except Exception:
+        pass
+    return None
+
+
+def generate_ranked_banner(
+    winner_name: str,
+    loser_name: str,
+    score_winner: int,
+    score_loser: int,
+    winner_elo: int,
+    loser_elo: int,
+    elo_gain: int,
+    elo_loss: int,
+    winner_rank: str,
+    loser_rank: str,
+    winner_avatar_bytes=None,
+    loser_avatar_bytes=None,
+) -> io.BytesIO:
+    bg = Image.open(BANNER_PATH).convert("RGBA")
+    W, H = bg.size  # 798 x 244
+
+    SCALE = 3
+    W2, H2 = W * SCALE, H * SCALE
+    bg = bg.resize((W2, H2), Image.LANCZOS)
+    draw = ImageDraw.Draw(bg)
+
+    try:
+        font_big   = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 94)
+        font_med   = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 44)
+        font_small = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 36)
+    except Exception:
+        font_big = font_med = font_small = ImageFont.load_default()
+
+    def draw_centered(text, cx, y, font, color):
+        bb = draw.textbbox((0, 0), text, font=font)
+        tw = bb[2] - bb[0]
+        draw.text((cx - tw // 2, y), text, font=font, fill=color)
+
+    def round_avatar(data, size: int) -> Image.Image:
+        if data:
+            av = Image.open(io.BytesIO(data)).convert("RGBA")
+        else:
+            av = Image.new("RGBA", (size, size), (90, 90, 90, 255))
+        av = av.resize((size, size), Image.LANCZOS)
+        mask = Image.new("L", (size, size), 0)
+        ImageDraw.Draw(mask).ellipse((0, 0, size, size), fill=255)
+        av.putalpha(mask)
+        return av
+
+    av_size  = int(170 * SCALE / 2.2)
+    pad      = int(38 * SCALE / 2)
+    left_x   = pad
+    right_x  = W2 - pad - av_size
+    av_y     = int((H2 - av_size) / 2) - int(35 * SCALE / 2)
+    left_cx  = left_x + av_size // 2
+    right_cx = right_x + av_size // 2
+
+    winner_av = round_avatar(winner_avatar_bytes, av_size)
+    loser_av  = round_avatar(loser_avatar_bytes,  av_size)
+    bg.paste(winner_av, (left_x, av_y), winner_av)
+    bg.paste(loser_av,  (right_x, av_y), loser_av)
+
+    score_text = f"{score_winner}  -  {score_loser}"
+    bb = draw.textbbox((0, 0), score_text, font=font_big)
+    tw, th = bb[2] - bb[0], bb[3] - bb[1]
+    sx = (W2 - tw) // 2
+    sy = (H2 - th) // 2 - int(45 * SCALE / 2)
+    draw.text((sx + 3, sy + 3), score_text, font=font_big, fill=(0, 0, 0, 160))
+    draw.text((sx, sy),         score_text, font=font_big, fill=(255, 255, 255, 255))
+
+    name_y = av_y + av_size + int(12 * SCALE / 2)
+    elo_y  = name_y + int(52 * SCALE / 2)
+    rank_y = elo_y  + int(42 * SCALE / 2)
+
+    draw_centered(winner_name[:14],              left_cx,  name_y, font_med,   (255, 255, 255, 255))
+    draw_centered(f"{winner_elo} (+{elo_gain})", left_cx,  elo_y,  font_small, (80,  230, 120, 255))
+    draw_centered(winner_rank,                   left_cx,  rank_y, font_small, (210, 210, 210, 255))
+
+    draw_centered(loser_name[:14],               right_cx, name_y, font_med,   (255, 255, 255, 255))
+    draw_centered(f"{loser_elo} (-{elo_loss})",  right_cx, elo_y,  font_small, (230,  80,  80, 255))
+    draw_centered(loser_rank,                    right_cx, rank_y, font_small, (210, 210, 210, 255))
+
+    out = io.BytesIO()
+    bg.save(out, format="PNG")
+    out.seek(0)
+    return out
 
 # ─────────────────────────────────────────
 # HELPERS
@@ -210,7 +306,6 @@ def update_ranks_in_tier(tier: str):
 def get_valid_matchups(tier: str):
     conn = get_db()
     c = conn.cursor()
-    # Exclude pending and done players
     c.execute("SELECT * FROM players WHERE tier = %s AND round_done = 0 AND (pending IS NULL OR pending = 0) ORDER BY rank_in_tier ASC", (tier,))
     players = [dict(p) for p in c.fetchall()]
     conn.close()
@@ -218,13 +313,11 @@ def get_valid_matchups(tier: str):
     if len(players) < 2:
         return []
 
-    # Sort by rank_in_tier so position 0=rank1, 1=rank2, 2=rank3, 3=rank4
     players = sorted(players, key=lambda p: p["rank_in_tier"])
 
     matchups = []
     paired = set()
 
-    # Fixed pairings by position: position 0 vs 2 (rank1 vs rank3) and position 1 vs 3 (rank2 vs rank4)
     fixed_pairs = [(0, 2), (1, 3)]
     for i, j in fixed_pairs:
         if i < len(players) and j < len(players):
@@ -240,10 +333,6 @@ def get_valid_matchups(tier: str):
     if matchups:
         return matchups
 
-    # Round 2 logic based on records
-    # Winners final: both rank1 and rank3 won (1W/0L) → rank1 vs rank2... 
-    # Actually: after round 1, winners play each other and losers play each other
-    # Group remaining active players by record
     remaining = [p for p in players if p["name"] not in paired]
     groups = {}
     for p in remaining:
@@ -254,7 +343,6 @@ def get_valid_matchups(tier: str):
 
     for key, names in groups.items():
         if len(names) >= 2:
-            # Sort by rank so highest ranked plays first
             names_sorted = sorted(names, key=lambda n: next(p["rank_in_tier"] for p in players if p["name"] == n))
             matchups.append((names_sorted[0], names_sorted[1], key))
 
@@ -262,7 +350,6 @@ def get_valid_matchups(tier: str):
 
 
 async def get_display_name(guild: discord.Guild, uid: str) -> str:
-    # Strip any <@> formatting to get the raw ID
     clean = uid.strip("<@>").strip()
     try:
         member = guild.get_member(int(clean))
@@ -276,8 +363,14 @@ async def get_display_name(guild: discord.Guild, uid: str) -> str:
     return f"<@{clean}>"
 
 def get_uid(raw: str) -> str:
-    """Always return a clean numeric ID from whatever is stored."""
     return raw.strip("<@>").strip()
+
+def get_display(guild, uid: str) -> str:
+    try:
+        member = guild.get_member(int(uid))
+        return member.display_name if member else uid
+    except Exception:
+        return uid
 
 async def send_announcement(message: str):
     if ANNOUNCEMENT_CHANNEL_ID and ANNOUNCEMENT_CHANNEL_ID != 0:
@@ -288,7 +381,6 @@ async def send_announcement(message: str):
 # ─────────────────────────────────────────
 # SLASH COMMANDS
 # ─────────────────────────────────────────
-
 
 PLAYSTYLES = ["Super Defensive", "Defensive", "Controlling", "Balanced", "Offensive", "Very Offensive"]
 
@@ -398,7 +490,6 @@ async def removeplayer(interaction: discord.Interaction, player: discord.Member)
     conn = get_db()
     c = conn.cursor()
     c.execute("DELETE FROM players WHERE name = %s", (name,))
-    # Fix ranks in the tier after removal
     c.execute("SELECT * FROM players WHERE tier = %s ORDER BY rank_in_tier ASC", (player_tier,))
     remaining = [dict(p) for p in c.fetchall()]
     for i, rp in enumerate(remaining):
@@ -457,7 +548,6 @@ async def score(interaction: discord.Interaction, player1: discord.Member, goals
         (name1, name2, goals1, goals2, datetime.now().isoformat(), match_tier)
     )
 
-    # Check if tier counts for golden boot
     c.execute("SELECT tier FROM players WHERE name = %s", (winner_name,))
     row = c.fetchone()
     in_golden_boot_tier = row["tier"] in GOLDEN_BOOT_TIERS if row else False
@@ -540,7 +630,6 @@ async def unscore(interaction: discord.Interaction, player1: discord.Member, pla
     conn = get_db()
     c = conn.cursor()
 
-    # Find the last match between these two players
     c.execute("""
         SELECT * FROM matches
         WHERE (player1 = %s AND player2 = %s) OR (player1 = %s AND player2 = %s)
@@ -554,7 +643,6 @@ async def unscore(interaction: discord.Interaction, player1: discord.Member, pla
         return
 
     match = dict(match)
-    # Figure out winner from scores
     if match["score1"] > match["score2"]:
         winner = match["player1"]
         loser = match["player2"]
@@ -566,7 +654,6 @@ async def unscore(interaction: discord.Interaction, player1: discord.Member, pla
         goals_winner = match["score2"]
         goals_loser = match["score1"]
 
-    # Reverse stats for winner
     c.execute("""
         UPDATE players SET
             wins = GREATEST(wins - 1, 0),
@@ -577,7 +664,6 @@ async def unscore(interaction: discord.Interaction, player1: discord.Member, pla
         WHERE name = %s
     """, (goals_winner, goals_loser, winner))
 
-    # Reverse stats for loser
     c.execute("""
         UPDATE players SET
             losses = GREATEST(losses - 1, 0),
@@ -588,14 +674,10 @@ async def unscore(interaction: discord.Interaction, player1: discord.Member, pla
         WHERE name = %s
     """, (goals_loser, goals_winner, loser))
 
-    # Delete the match record
     c.execute("DELETE FROM matches WHERE id = %s", (match["id"],))
 
     conn.commit()
     conn.close()
-
-    winner_display = player1.display_name if winner == name1 else player2.display_name
-    loser_display = player2.display_name if winner == name1 else player1.display_name
 
     await interaction.followup.send(
         f"↩️ Match undone between {player1.display_name} and {player2.display_name}!\n"
@@ -666,7 +748,6 @@ async def updatetier(interaction: discord.Interaction, tier: str, remove_losers:
         else:
             results.append(f"➡️ {get_display(interaction.guild, get_uid(name))}: {rw}W / {rl}L — no change")
 
-    # Fix ranks in affected tiers (excluding removed players)
     affected_tiers = set([tier] + [t for _, t in promo_list] + [t for _, t in demo_list])
     for t in affected_tiers:
         c.execute("SELECT * FROM players WHERE tier = %s ORDER BY rank_in_tier ASC", (t,))
@@ -674,11 +755,9 @@ async def updatetier(interaction: discord.Interaction, tier: str, remove_losers:
         promoted_into_names = [name for name, nt in promo_list if nt == t]
         demoted_into_names = [name for name, nt in demo_list if nt == t]
         stayers = [p["name"] for p in tier_players if p["name"] not in promoted_into_names and p["name"] not in demoted_into_names]
-        # Sort promoted players: best record first (most wins then fewest losses)
         promoted_players = [p for p in players if p["name"] in promoted_into_names]
         promoted_players.sort(key=lambda x: (-x["round_wins"], x["round_losses"]))
         promoted_sorted = [p["name"] for p in promoted_players]
-        # Sort demoted players: worst record last
         demoted_players = [p for p in players if p["name"] in demoted_into_names]
         demoted_players.sort(key=lambda x: (-x["round_wins"], x["round_losses"]))
         demoted_sorted = [p["name"] for p in demoted_players]
@@ -686,7 +765,6 @@ async def updatetier(interaction: discord.Interaction, tier: str, remove_losers:
         for i, name in enumerate(ordered):
             c.execute("UPDATE players SET rank_in_tier = %s WHERE name = %s", (i + 1, name))
 
-    # After removal cascade ranks down through all tiers below
     if removed_list:
         tier_idx = tier_index(tier)
         for t_idx in range(tier_idx, len(TIERS)):
@@ -795,7 +873,6 @@ async def profile(interaction: discord.Interaction, player: discord.Member):
     total = p["wins"] + p["losses"]
     winrate = round((p["wins"] / total * 100)) if total > 0 else 0
 
-    # Calculate global rank in one query
     conn = get_db()
     c = conn.cursor()
     c.execute("SELECT name, tier, rank_in_tier FROM players ORDER BY rank_in_tier ASC")
@@ -879,7 +956,6 @@ async def updateall(interaction: discord.Interaction):
         await interaction.followup.send("❌ No players found!")
         return
 
-    # First collect all moves so we don't process cascading changes
     moves = {}
     for p in all_players:
         name = p["name"]
@@ -892,7 +968,6 @@ async def updateall(interaction: discord.Interaction):
         elif rl >= 2 and current_idx < len(TIERS) - 1:
             moves[name] = ("demo", TIERS[current_idx + 1])
 
-    # Apply all moves at once
     conn = get_db()
     c = conn.cursor()
 
@@ -921,11 +996,9 @@ async def updateall(interaction: discord.Interaction):
 
     conn.commit()
 
-    # Reset all round stats and clear pending for everyone
     c.execute("UPDATE players SET round_wins = 0, round_losses = 0, round_done = 0, pending = 0")
     conn.commit()
 
-    # Save new ranking snapshot to overview_ranking
     c.execute("SELECT * FROM players ORDER BY rank_in_tier ASC")
     all_players_after = [dict(p) for p in c.fetchall()]
     c.execute("DELETE FROM overview_ranking")
@@ -972,7 +1045,6 @@ async def updateall(interaction: discord.Interaction):
     await interaction.followup.send(embed=embed)
 
 
-
 @tree.command(name="overview", description="CFI Ranking as it was after the last /updateall")
 @is_cfi_dev()
 async def overview(interaction: discord.Interaction):
@@ -988,7 +1060,6 @@ async def overview(interaction: discord.Interaction):
         await interaction.followup.send("No overview available yet. Run /updateall first!")
         return
 
-    # Get player stats from players table
     conn = get_db()
     c = conn.cursor()
     c.execute("SELECT * FROM players")
@@ -1017,7 +1088,6 @@ async def overview(interaction: discord.Interaction):
                     lines.append(f"{global_rank}. <@{uid}>")
                 global_rank += 1
 
-            # Split into chunks of max 1000 chars per field
             field_chunks = []
             current = ""
             for line in lines:
@@ -1160,7 +1230,6 @@ async def setstats(interaction: discord.Interaction, player: discord.Member,
     if round_wins is not None:
         updates.append("round_wins = %s")
         values.append(round_wins)
-        # Also update total wins by the difference
         old_round_wins = p["round_wins"] or 0
         diff_wins = round_wins - old_round_wins
         if diff_wins != 0:
@@ -1169,7 +1238,6 @@ async def setstats(interaction: discord.Interaction, player: discord.Member,
     if round_losses is not None:
         updates.append("round_losses = %s")
         values.append(round_losses)
-        # Also update total losses by the difference
         old_round_losses = p["round_losses"] or 0
         diff_losses = round_losses - old_round_losses
         if diff_losses != 0:
@@ -1189,10 +1257,8 @@ async def setstats(interaction: discord.Interaction, player: discord.Member,
     c.execute(f"UPDATE players SET {', '.join(updates)} WHERE name = %s", values)
     conn.commit()
 
-    # If rank changed, fix conflicts in that tier
     if rank is not None:
         target_tier = tier if tier else p["tier"]
-        # Push any other player that has the same rank down by 1
         c.execute(
             "UPDATE players SET rank_in_tier = rank_in_tier + 1 WHERE tier = %s AND rank_in_tier = %s AND name != %s",
             (target_tier, rank, uid)
@@ -1231,22 +1297,18 @@ async def removeandfill(interaction: discord.Interaction, player: discord.Member
 
     conn = get_db()
     c = conn.cursor()
-
-    # Remove the player
     c.execute("DELETE FROM players WHERE name = %s", (uid,))
     conn.commit()
     conn.close()
 
     log = [f"🗑️ **{display}** removed from **{removed_tier}** (Rank {removed_rank})"]
 
-    # Cascade: for each tier starting from removed_tier going down
     current_tier_idx = tier_index(removed_tier)
 
     while current_tier_idx < len(TIERS) - 1:
         current_tier = TIERS[current_tier_idx]
         next_tier = TIERS[current_tier_idx + 1]
 
-        # Re-rank current tier (fill gaps)
         players_in_current = get_tier_players(current_tier)
         conn = get_db()
         c = conn.cursor()
@@ -1255,12 +1317,10 @@ async def removeandfill(interaction: discord.Interaction, player: discord.Member
         conn.commit()
         conn.close()
 
-        # Check if current tier now has less than 4 players
         players_in_current = get_tier_players(current_tier)
         if len(players_in_current) >= 4:
             break
 
-        # Get rank 1 player from next tier
         players_in_next = get_tier_players(next_tier)
         if not players_in_next:
             log.append(f"⚠️ **{next_tier}** is empty, no one to promote.")
@@ -1280,7 +1340,6 @@ async def removeandfill(interaction: discord.Interaction, player: discord.Member
 
         log.append(f"⬆️ {get_display(interaction.guild, get_uid(promoted['name']))} moved from **{next_tier}** rank 1 → **{current_tier}** rank {new_rank}")
 
-        # Re-rank next tier
         players_in_next = get_tier_players(next_tier)
         conn = get_db()
         c = conn.cursor()
@@ -1291,7 +1350,6 @@ async def removeandfill(interaction: discord.Interaction, player: discord.Member
 
         current_tier_idx += 1
 
-    # Final re-rank of last tier
     last_tier = TIERS[-1]
     players_last = get_tier_players(last_tier)
     conn = get_db()
@@ -1315,12 +1373,10 @@ async def on_ready():
     try:
         print(f"⏳ on_ready started for {bot.user}")
         setup_db()
-        # Setup ranked tables
         conn_r = get_db()
         setup_ranked_db(conn_r)
         conn_r.close()
         print("📊 Database ready")
-        print("👥 Skipping member cache preload")
         synced = await tree.sync()
         print(f"✅ Bot is online as {bot.user}!")
         print(f"🎮 Slash commands synced: {len(synced)} commands")
@@ -1350,22 +1406,20 @@ async def showscores(interaction: discord.Interaction, tier: str):
     players = [dict(p) for p in c.fetchall()]
     conn.close()
 
-    def get_display(uid):
+    def get_display_local(uid):
         member = interaction.guild.get_member(int(uid))
         return member.display_name if member else uid
 
     embed = discord.Embed(title=f"📊 {tier} — Match Overview", color=0x00ff88)
 
-    # Match list
     if matches:
         match_lines = []
         for m in matches:
-            n1 = get_display(m["player1"])
-            n2 = get_display(m["player2"])
+            n1 = get_display_local(m["player1"])
+            n2 = get_display_local(m["player2"])
             match_lines.append(f"{n1} {m['score1']} — {m['score2']} {n2}")
         embed.add_field(name="⚽ Matches", value=chr(10).join(match_lines), inline=False)
 
-    # Per-player summary from matches in this tier
     stats = {}
     for m in matches:
         for uid, goals_for, goals_against, won in [
@@ -1384,7 +1438,7 @@ async def showscores(interaction: discord.Interaction, tier: str):
         summary_lines = []
         for p in players:
             uid = get_uid(p["name"])
-            name = get_display(uid)
+            name = get_display_local(uid)
             s = stats.get(uid, {"w": 0, "l": 0, "goals": 0})
             summary_lines.append(f"{name} — W: {s['w']} | L: {s['l']} | Goals: {s['goals']}")
         embed.add_field(name="📈 Summary", value=chr(10).join(summary_lines), inline=False)
@@ -1422,7 +1476,7 @@ async def log(interaction: discord.Interaction):
 
 
 # ============================================================
-# RANKED SYSTEM ADDITION
+# RANKED SYSTEM
 # ============================================================
 
 RANKED_RANKS = [
@@ -1477,9 +1531,7 @@ def setup_ranked_db(conn):
     """)
     conn.commit()
 
-# Pending ranked scores: {message_id: {player1, player2, score1, score2}}
 pending_ranked_scores = {}
-# Active matchmaking: {message_id: seeker_id}
 active_matchmaking = {}
 
 @tree.command(name="rankedregister", description="Register yourself for CFI Ranked")
@@ -1513,7 +1565,6 @@ async def rankedprofile(interaction: discord.Interaction, player: discord.Member
         await interaction.followup.send(f"❌ **{target.display_name}** is not registered for Ranked!")
         return
     p = dict(p)
-    # Global rank position
     c.execute("SELECT name FROM ranked_players ORDER BY elo DESC, name ASC")
     all_ranked = [dict(r) for r in c.fetchall()]
     global_pos = next((i + 1 for i, r in enumerate(all_ranked) if r["name"] == uid), 1)
@@ -1573,9 +1624,6 @@ async def rankedmatchmaking(interaction: discord.Interaction):
     if not p:
         await interaction.followup.send("❌ You are not registered for Ranked! Use /rankedregister first.", ephemeral=True)
         return
-
-    p = dict(p)
-    rank_name = get_ranked_rank(p["elo"])
 
     embed = discord.Embed(title="🕵️ Ranked Matchmaking", color=0x5865F2)
     embed.description = (
@@ -1681,7 +1729,6 @@ async def on_interaction(interaction: discord.Interaction):
         )
         await interaction.response.edit_message(embed=embed, view=None)
 
-
     # ---- MATCHMAKING CANCEL ----
     elif custom_id == "ranked_cancel":
         if msg_id not in active_matchmaking:
@@ -1711,7 +1758,9 @@ async def on_interaction(interaction: discord.Interaction):
         s1 = data["score1"]
         s2 = data["score2"]
         winner_id = p1_id if s1 > s2 else p2_id
-        loser_id = p2_id if s1 > s2 else p1_id
+        loser_id  = p2_id if s1 > s2 else p1_id
+        score_winner = max(s1, s2)
+        score_loser  = min(s1, s2)
 
         conn = get_db()
         c = conn.cursor()
@@ -1734,13 +1783,14 @@ async def on_interaction(interaction: discord.Interaction):
         del pending_ranked_scores[msg_id]
 
         winner_member = interaction.guild.get_member(int(winner_id))
-        loser_member = interaction.guild.get_member(int(loser_id))
-        winner_name = winner_member.display_name if winner_member else winner_id
-        loser_name = loser_member.display_name if loser_member else loser_id
+        loser_member  = interaction.guild.get_member(int(loser_id))
+        winner_name   = winner_member.display_name if winner_member else winner_id
+        loser_name    = loser_member.display_name  if loser_member  else loser_id
 
         winner_rank = get_ranked_rank(new_winner_elo)
-        loser_rank = get_ranked_rank(new_loser_elo)
+        loser_rank  = get_ranked_rank(new_loser_elo)
 
+        # ── confirm embed (edit original message) ────────────────
         embed = discord.Embed(title="✅ Ranked Score Confirmed!", color=0x00ff88)
         embed.description = (
             f"🏆 **{winner_name}** wins!\n\n"
@@ -1748,6 +1798,39 @@ async def on_interaction(interaction: discord.Interaction):
             f"**{loser_name}** — {new_loser_elo} pts ({loser_rank}) `-{loss}`"
         )
         await interaction.response.edit_message(embed=embed, view=None)
+
+        # ── generate and send banner ──────────────────────────────
+        try:
+            async with aiohttp.ClientSession() as session:
+                winner_av_bytes = await fetch_avatar(
+                    session,
+                    winner_member.display_avatar.url if winner_member else None
+                ) if winner_member else None
+                loser_av_bytes = await fetch_avatar(
+                    session,
+                    loser_member.display_avatar.url if loser_member else None
+                ) if loser_member else None
+
+            banner_io = generate_ranked_banner(
+                winner_name=winner_name,
+                loser_name=loser_name,
+                score_winner=score_winner,
+                score_loser=score_loser,
+                winner_elo=new_winner_elo,
+                loser_elo=new_loser_elo,
+                elo_gain=gain,
+                elo_loss=loss,
+                winner_rank=winner_rank,
+                loser_rank=loser_rank,
+                winner_avatar_bytes=winner_av_bytes,
+                loser_avatar_bytes=loser_av_bytes,
+            )
+
+            await interaction.followup.send(
+                file=discord.File(banner_io, filename="ranked_result.png")
+            )
+        except Exception as e:
+            print(f"Banner generation error: {e}")
 
     # ---- SCORE DENY ----
     elif custom_id == "ranked_deny":
