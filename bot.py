@@ -304,10 +304,13 @@ async def playstyle_autocomplete(interaction: discord.Interaction, current: str)
     ]
 
 async def tier_autocomplete(interaction: discord.Interaction, current: str):
-    return [
-        app_commands.Choice(name=tier, value=tier)
-        for tier in TIERS if current.lower() in tier.lower()
-    ]
+    try:
+        return [
+            app_commands.Choice(name=tier, value=tier)
+            for tier in TIERS if current.lower() in tier.lower()
+        ]
+    except Exception:
+        return []
 
 async def player_autocomplete(interaction: discord.Interaction, current: str):
     conn = get_db()
