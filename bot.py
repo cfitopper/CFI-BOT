@@ -158,10 +158,10 @@ def generate_ranked_banner(
     draw = ImageDraw.Draw(bg)
 
     try:
-        font_score = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 72)
-        font_name  = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 18)
-        font_elo   = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 15)
-        font_rank  = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 13)
+        font_score = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 90)
+        font_name  = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 17)
+        font_elo   = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 14)
+        font_rank  = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 12)
     except Exception:
         font_score = font_name = font_elo = font_rank = ImageFont.load_default()
 
@@ -181,9 +181,9 @@ def generate_ranked_banner(
         av.putalpha(mask)
         return av
 
-    av_size  = 130
+    av_size  = 110
     pad      = 22
-    av_y     = (H - av_size) // 2 - 18
+    av_y     = 15
     left_x   = pad
     right_x  = W - pad - av_size
     left_cx  = left_x + av_size // 2
@@ -198,13 +198,13 @@ def generate_ranked_banner(
     bb = draw.textbbox((0, 0), score_text, font=font_score)
     tw, th = bb[2] - bb[0], bb[3] - bb[1]
     sx = (W - tw) // 2
-    sy = (H - th) // 2 - 12
-    draw.text((sx + 2, sy + 2), score_text, font=font_score, fill=(0, 0, 0, 140))
+    sy = (H - th) // 2 - 10
+    draw.text((sx + 2, sy + 2), score_text, font=font_score, fill=(0, 0, 0, 150))
     draw.text((sx, sy),         score_text, font=font_score, fill=(255, 255, 255, 255))
 
-    name_y = av_y + av_size + 5
-    elo_y  = name_y + 20
-    rank_y = elo_y + 17
+    name_y = av_y + av_size + 4
+    elo_y  = name_y + 19
+    rank_y = elo_y + 16
 
     draw_centered(winner_name[:16], left_cx,  name_y, font_name, (255, 255, 255, 255))
     draw_centered(f"{winner_elo} (+{elo_gain})", left_cx,  elo_y,  font_elo, (80,  230, 120, 255))
