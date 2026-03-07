@@ -176,9 +176,9 @@ def generate_ranked_banner(
         av = av.resize((size, size), Image.LANCZOS)
         return av
 
-    av_size = H - 20
-    pad     = 10
-    av_y    = 10
+    av_size = int(H * 0.72)
+    pad     = 30
+    av_y    = (H - av_size) // 2
     left_x  = pad
     right_x = W - pad - av_size
 
