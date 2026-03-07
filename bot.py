@@ -1579,8 +1579,7 @@ async def rankedmatchmaking(interaction: discord.Interaction):
 
     embed = discord.Embed(title="🕵️ Ranked Matchmaking", color=0x5865F2)
     embed.description = (
-        "An **anonymous player** is looking for a match!\n"
-        f"**Hint:** {rank_name}\n\n"
+        "An **anonymous player** is looking for a match!\n\n"
         "Click **Accept** to play!"
     )
 
@@ -1657,7 +1656,7 @@ async def on_interaction(interaction: discord.Interaction):
             await interaction.response.send_message("❌ This matchmaking session has expired.", ephemeral=True)
             return
         seeker_id = active_matchmaking[msg_id]
-        if uid == seeker_id:
+        if str(uid) == str(seeker_id):
             await interaction.response.send_message("❌ You can't accept your own matchmaking!", ephemeral=True)
             return
         conn = get_db()
@@ -1700,7 +1699,10 @@ async def on_interaction(interaction: discord.Interaction):
             await interaction.response.send_message("❌ This score submission has expired.", ephemeral=True)
             return
         data = pending_ranked_scores[msg_id]
-        if uid != data["player2"]:
+        if str(uid) == str(data["submitter"]):
+            await interaction.response.send_message("❌ You can't confirm your own score submission!", ephemeral=True)
+            return
+        if str(uid) != str(data["player2"]):
             await interaction.response.send_message("❌ Only the opponent can confirm this score.", ephemeral=True)
             return
 
@@ -1753,7 +1755,7 @@ async def on_interaction(interaction: discord.Interaction):
             await interaction.response.send_message("❌ This score submission has expired.", ephemeral=True)
             return
         data = pending_ranked_scores[msg_id]
-        if uid != data["player2"]:
+        if str(uid) != str(data["player2"]):
             await interaction.response.send_message("❌ Only the opponent can deny this score.", ephemeral=True)
             return
         del pending_ranked_scores[msg_id]
