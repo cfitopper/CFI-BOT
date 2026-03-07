@@ -1498,11 +1498,11 @@ async def rankedregister(interaction: discord.Interaction):
     conn.close()
     await interaction.followup.send("✅ You are now registered for CFI Ranked! Starting Elo: **0** (Bronze)", ephemeral=True)
 
-@tree.command(name="rankedprofile", description="View your or another player's ranked profile")
-@app_commands.describe(player="Select a player (leave empty for yourself)")
-async def rankedprofile(interaction: discord.Interaction, player: discord.Member = None):
+@tree.command(name="rankedprofile", description="View a player's ranked profile")
+@app_commands.describe(player="Select a player")
+async def rankedprofile(interaction: discord.Interaction, player: discord.Member):
     await interaction.response.defer()
-    target = player or interaction.user
+    target = player
     uid = str(target.id)
     conn = get_db()
     c = conn.cursor()
@@ -1526,9 +1526,9 @@ async def rankedprofile(interaction: discord.Interaction, player: discord.Member
     embed = discord.Embed(title=f"⚽ {target.display_name}", color=0xffaa00)
     embed.set_thumbnail(url=target.display_avatar.url)
     embed.description = (
-        f"**Rank:** {rank_name}\n"
         f"**Elo:** {p['elo']} pts\n"
         f"**Global Position:** #{global_pos}\n"
+        f"**Rank:** {rank_name}\n"
         f"**Wins:** {p['wins']}\n"
         f"**Losses:** {p['losses']}\n"
         f"**Matches Played:** {total}\n"
