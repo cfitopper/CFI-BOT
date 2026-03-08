@@ -109,6 +109,12 @@ def setup_db():
         conn.rollback()
 
     try:
+        c.execute("ALTER TABLE players ADD COLUMN next_tier TEXT DEFAULT NULL")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+
+    try:
         c.execute("ALTER TABLE players ADD COLUMN golden_boot_goals INTEGER DEFAULT 0")
         conn.commit()
     except Exception:
@@ -694,81 +700,40 @@ async def updatetier(interaction: discord.Interaction, tier: str, remove_losers:
     conn = get_db()
     c = conn.cursor()
 
-    promo_list = []
-    demo_list = []
-    removed_list = []
+    # Sorteer op rank_in_tier
+    players.sort(key=lambda x: x["rank_in_tier"])
+    n = len(players)
+    current_idx = tier_index(tier)
 
-    for p in players:
+    if n >= 4:
+        promo_count = 2
+        demo_count  = 2
+    elif n == 3:
+        promo_count = 1
+        demo_count  = 1
+    else:
+        promo_count = 0
+        demo_count  = 0
+
+    for i, p in enumerate(players):
         name = p["name"]
-        rw = p["round_wins"]
-        rl = p["round_losses"]
-
-        if rw >= 2:
-            current_idx = tier_index(p["tier"])
-            if current_idx > 0:
-                new_tier = TIERS[current_idx - 1]
-                c.execute(
-                    "UPDATE players SET tier = %s, pending = 1 WHERE name = %s",
-                    (new_tier, name)
-                )
-                promo_list.append((name, new_tier))
-                results.append(f"🎉 {get_display(interaction.guild, get_uid(name))} → **{new_tier}** (pending)")
-            else:
-                results.append(f"🏅 {get_display(interaction.guild, get_uid(name))} is already in the highest tier!")
-        elif rl >= 2:
-            if remove_losers:
-                c.execute("DELETE FROM players WHERE name = %s", (name,))
-                removed_list.append(name)
-                results.append(f"🚫 {get_display(interaction.guild, get_uid(name))} removed from the competition")
-            else:
-                current_idx = tier_index(p["tier"])
-                if current_idx < len(TIERS) - 1:
-                    new_tier = TIERS[current_idx + 1]
-                    c.execute(
-                        "UPDATE players SET tier = %s, pending = 1 WHERE name = %s",
-                        (new_tier, name)
-                    )
-                    demo_list.append((name, new_tier))
-                    results.append(f"📉 {get_display(interaction.guild, get_uid(name))} → **{new_tier}** (pending)")
-                else:
-                    c.execute("DELETE FROM players WHERE name = %s", (name,))
-                    removed_list.append(name)
-                    results.append(f"🚫 {get_display(interaction.guild, get_uid(name))} removed from the system (bottom of Bronze)")
+        if i < promo_count and current_idx > 0:
+            new_tier = TIERS[current_idx - 1]
+            c.execute("UPDATE players SET next_tier = %s WHERE name = %s", (new_tier, name))
+            results.append(f"🎉 {get_display(interaction.guild, get_uid(name))} → **{new_tier}**")
+        elif i >= n - demo_count and current_idx < len(TIERS) - 1:
+            new_tier = TIERS[current_idx + 1]
+            c.execute("UPDATE players SET next_tier = %s WHERE name = %s", (new_tier, name))
+            results.append(f"📉 {get_display(interaction.guild, get_uid(name))} → **{new_tier}**")
         else:
-            results.append(f"➡️ {get_display(interaction.guild, get_uid(name))}: {rw}W / {rl}L — no change")
-
-    affected_tiers = set([tier] + [t for _, t in promo_list] + [t for _, t in demo_list])
-    for t in affected_tiers:
-        c.execute("SELECT * FROM players WHERE tier = %s ORDER BY rank_in_tier ASC", (t,))
-        tier_players = [dict(p) for p in c.fetchall()]
-        promoted_into_names = [name for name, nt in promo_list if nt == t]
-        demoted_into_names = [name for name, nt in demo_list if nt == t]
-        stayers = [p["name"] for p in tier_players if p["name"] not in promoted_into_names and p["name"] not in demoted_into_names]
-        promoted_players = [p for p in players if p["name"] in promoted_into_names]
-        promoted_players.sort(key=lambda x: (-x["round_wins"], x["round_losses"]))
-        promoted_sorted = [p["name"] for p in promoted_players]
-        demoted_players = [p for p in players if p["name"] in demoted_into_names]
-        demoted_players.sort(key=lambda x: (-x["round_wins"], x["round_losses"]))
-        demoted_sorted = [p["name"] for p in demoted_players]
-        ordered = demoted_sorted + stayers + promoted_sorted
-        for i, name in enumerate(ordered):
-            c.execute("UPDATE players SET rank_in_tier = %s WHERE name = %s", (i + 1, name))
-
-    if removed_list:
-        tier_idx = tier_index(tier)
-        for t_idx in range(tier_idx, len(TIERS)):
-            t = TIERS[t_idx]
-            c.execute("SELECT * FROM players WHERE tier = %s ORDER BY rank_in_tier ASC", (t,))
-            t_players = [dict(p) for p in c.fetchall()]
-            for i, p in enumerate(t_players):
-                c.execute("UPDATE players SET rank_in_tier = %s WHERE name = %s", (i + 1, p["name"]))
+            results.append(f"➡️ {get_display(interaction.guild, get_uid(name))} blijft in **{tier}**")
 
     conn.commit()
     conn.close()
 
     embed = discord.Embed(title=f"🔄 Tier Update — {tier}", color=0xff9900)
     embed.description = "\n".join(results)
-    embed.set_footer(text="Moved players are pending. Use /updateall to start the new round.")
+    embed.set_footer(text="Gebruik /updateall als alle tiers gedaan zijn om iedereen te verplaatsen.")
 
     await interaction.followup.send(embed=embed)
     await send_announcement(embed.description)
@@ -930,7 +895,7 @@ async def alltiers(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed)
 
 
-@tree.command(name="updateall", description="Process all promos and demos for every tier at once (admin only)")
+@tree.command(name="updateall", description="Verplaats iedereen naar nieuwe tier en reset stats (admin only)")
 @is_cfi_dev()
 async def updateall(interaction: discord.Interaction):
     await interaction.response.defer()
@@ -939,56 +904,59 @@ async def updateall(interaction: discord.Interaction):
     c = conn.cursor()
     c.execute("SELECT * FROM players")
     all_players = [dict(p) for p in c.fetchall()]
-    conn.close()
 
     if not all_players:
+        conn.close()
         await interaction.followup.send("❌ No players found!")
         return
 
-    moves = {}
-    for p in all_players:
-        name = p["name"]
-        rw = p["round_wins"]
-        rl = p["round_losses"]
-        current_idx = tier_index(p["tier"])
-
-        if rw >= 2 and current_idx > 0:
-            moves[name] = ("promo", TIERS[current_idx - 1])
-        elif rl >= 2 and current_idx < len(TIERS) - 1:
-            moves[name] = ("demo", TIERS[current_idx + 1])
-
-    conn = get_db()
-    c = conn.cursor()
-
     promo_list = []
-    demo_list = []
-    none_list = []
+    demo_list  = []
 
+    # Bewaar round stats voor rank sortering later
+    round_stats = {p["name"]: {"round_wins": p["round_wins"], "round_losses": p["round_losses"]} for p in all_players}
+
+    # Verplaats iedereen die een next_tier heeft
     for p in all_players:
-        name = p["name"]
-        if name in moves:
-            move_type, new_tier = moves[name]
-            c.execute(
-                "UPDATE players SET tier = %s, round_wins = 0, round_losses = 0, round_done = 0 WHERE name = %s",
-                (new_tier, name)
-            )
-            if move_type == "promo":
-                promo_list.append((name, new_tier))
+        if p.get("next_tier"):
+            old_tier = p["tier"]
+            new_tier = p["next_tier"]
+            c.execute("UPDATE players SET tier = %s, next_tier = NULL, round_wins = 0, round_losses = 0, round_done = 0, pending = 0 WHERE name = %s", (new_tier, p["name"]))
+            if tier_index(new_tier) < tier_index(old_tier):
+                promo_list.append((p["name"], new_tier))
             else:
-                demo_list.append((name, new_tier))
+                demo_list.append((p["name"], new_tier))
         else:
-            c.execute(
-                "UPDATE players SET round_wins = 0, round_losses = 0, round_done = 0 WHERE name = %s",
-                (name,)
-            )
-            none_list.append(f"➡️ {get_display(interaction.guild, get_uid(name))}")
+            c.execute("UPDATE players SET round_wins = 0, round_losses = 0, round_done = 0, pending = 0 WHERE name = %s", (p["name"],))
 
     conn.commit()
 
-    c.execute("UPDATE players SET round_wins = 0, round_losses = 0, round_done = 0, pending = 0")
+    # Herbereken rank_in_tier op basis van round record:
+    # Gedegradeerden: 1W2L → rank1, 0W2L → rank2
+    # Gepromoveerden: 2W0L → rank3, 2W1L → rank4
+    demoted_names  = {name for name, _ in demo_list}
+    promoted_names = {name for name, _ in promo_list}
+
+    c.execute("SELECT * FROM players ORDER BY tier, rank_in_tier ASC")
+    all_players_rerank = [dict(p) for p in c.fetchall()]
+    for tier in TIERS:
+        tier_players = [p for p in all_players_rerank if p["tier"] == tier]
+        demoted_in  = [p for p in tier_players if p["name"] in demoted_names]
+        stayers     = [p for p in tier_players if p["name"] not in demoted_names and p["name"] not in promoted_names]
+        promoted_in = [p for p in tier_players if p["name"] in promoted_names]
+
+        # Gedegradeerden: meeste wins eerst (1W2L beter dan 0W2L) → rank1 en rank2
+        demoted_in.sort(key=lambda p: -round_stats[p["name"]]["round_wins"])
+        # Gepromoveerden: minste losses eerst (2W0L beter dan 2W1L) → rank3 en rank4
+        promoted_in.sort(key=lambda p: round_stats[p["name"]]["round_losses"])
+
+        ordered = demoted_in + stayers + promoted_in
+        for new_rank, p in enumerate(ordered, start=1):
+            c.execute("UPDATE players SET rank_in_tier = %s WHERE name = %s", (new_rank, p["name"]))
     conn.commit()
 
-    c.execute("SELECT * FROM players ORDER BY rank_in_tier ASC")
+    # Sla overview op
+    c.execute("SELECT * FROM players ORDER BY tier, rank_in_tier ASC")
     all_players_after = [dict(p) for p in c.fetchall()]
     c.execute("DELETE FROM overview_ranking")
     position = 1
@@ -1015,8 +983,7 @@ async def updateall(interaction: discord.Interaction):
             chunks.append(current)
         return chunks
 
-    embed = discord.Embed(title="🔄 Full Ranking Update", color=0xff9900)
-
+    embed = discord.Embed(title="🔄 Nieuwe Ronde Gestart!", color=0xff9900)
     if promo_list:
         chunks = make_chunks([f"🎉 {get_display(interaction.guild, get_uid(n))} → **{t}**" for n, t in promo_list])
         for i, chunk in enumerate(chunks):
@@ -1025,12 +992,7 @@ async def updateall(interaction: discord.Interaction):
         chunks = make_chunks([f"📉 {get_display(interaction.guild, get_uid(n))} → **{t}**" for n, t in demo_list])
         for i, chunk in enumerate(chunks):
             embed.add_field(name="📉 Demotions" if i == 0 else "​", value=chunk, inline=False)
-    if none_list:
-        chunks = make_chunks(none_list)
-        for i, chunk in enumerate(chunks):
-            embed.add_field(name="➡️ No change" if i == 0 else "​", value=chunk, inline=False)
-
-    embed.set_footer(text="All round stats reset. New round can begin!")
+    embed.set_footer(text="Alle round stats gereset. Nieuwe ronde kan beginnen!")
     await interaction.followup.send(embed=embed)
 
 
