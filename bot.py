@@ -897,6 +897,46 @@ async def alltiers(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed)
 
 
+@tree.command(name="ranking", description="Toon alle tiers met alleen spelersnamen")
+async def ranking(interaction: discord.Interaction):
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT * FROM players ORDER BY rank_in_tier")
+    all_players = [dict(p) for p in c.fetchall()]
+    conn.close()
+
+    if not all_players:
+        await interaction.response.send_message("There are no players yet!")
+        return
+
+    tier_data = {}
+    for p in all_players:
+        if p["tier"] not in tier_data:
+            tier_data[p["tier"]] = []
+        tier_data[p["tier"]].append(p)
+
+    embeds = []
+    current_embed = discord.Embed(title="🌍 CFI Ranking", color=0x00ff88)
+    field_count = 0
+
+    for tier in TIERS:
+        if tier in tier_data:
+            lines = []
+            for i, p in enumerate(tier_data[tier], 1):
+                uid = get_uid(p["name"])
+                display = get_display(interaction.guild, uid)
+                lines.append(f"{i}. {display}")
+            value = "\n".join(lines)
+            if field_count >= 25:
+                embeds.append(current_embed)
+                current_embed = discord.Embed(color=0x00ff88)
+                field_count = 0
+            current_embed.add_field(name=f"**{tier}**", value=value, inline=True)
+            field_count += 1
+
+    embeds.append(current_embed)
+    await interaction.response.send_message(embeds=embeds)
+
 @tree.command(name="updateall", description="Verplaats iedereen naar nieuwe tier en reset stats (admin only)")
 @is_cfi_dev()
 async def updateall(interaction: discord.Interaction):
