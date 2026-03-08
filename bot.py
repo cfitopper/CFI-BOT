@@ -580,11 +580,11 @@ async def score(interaction: discord.Interaction, player1: discord.Member, goals
 
     if winner["round_wins"] >= 2:
         c.execute("UPDATE players SET round_done = 1 WHERE name = %s", (winner_name,))
-        promo_msg = f"\n🎉 <@{get_uid(winner_name)}> has 2 wins — **PROMOTION** incoming!"
+        promo_msg = f"\n✅ <@{get_uid(winner_name)}> has 2 wins — **Round Done**!"
 
     if loser["round_losses"] >= 2:
         c.execute("UPDATE players SET round_done = 1 WHERE name = %s", (loser_name,))
-        demo_msg = f"\n📉 <@{get_uid(loser_name)}> has 2 losses — **DEMOTION** incoming!"
+        demo_msg = f"\n✅ <@{get_uid(loser_name)}> has 2 losses — **Round Done**!"
 
     conn.commit()
     conn.close()
@@ -715,13 +715,15 @@ async def updatetier(interaction: discord.Interaction, tier: str, remove_losers:
         promo_count = 0
         demo_count  = 0
 
-    for i, p in enumerate(players):
+    for p in players:
         name = p["name"]
-        if i < promo_count and current_idx > 0:
+        rw = p["round_wins"]
+        rl = p["round_losses"]
+        if rw >= 2 and current_idx > 0:
             new_tier = TIERS[current_idx - 1]
             c.execute("UPDATE players SET next_tier = %s WHERE name = %s", (new_tier, name))
             results.append(f"🎉 {get_display(interaction.guild, get_uid(name))} → **{new_tier}**")
-        elif i >= n - demo_count and current_idx < len(TIERS) - 1:
+        elif rl >= 2 and current_idx < len(TIERS) - 1:
             new_tier = TIERS[current_idx + 1]
             c.execute("UPDATE players SET next_tier = %s WHERE name = %s", (new_tier, name))
             results.append(f"📉 {get_display(interaction.guild, get_uid(name))} → **{new_tier}**")
@@ -947,6 +949,8 @@ async def updateall(interaction: discord.Interaction):
 
         # Gedegradeerden: meeste wins eerst (1W2L beter dan 0W2L) → rank1 en rank2
         demoted_in.sort(key=lambda p: -round_stats[p["name"]]["round_wins"])
+        # Stayers: sorteer ook op record (meeste wins en minste losses)
+        stayers.sort(key=lambda p: (-round_stats[p["name"]]["round_wins"], round_stats[p["name"]]["round_losses"]))
         # Gepromoveerden: minste losses eerst (2W0L beter dan 2W1L) → rank3 en rank4
         promoted_in.sort(key=lambda p: round_stats[p["name"]]["round_losses"])
 
@@ -1327,6 +1331,115 @@ async def removeandfill(interaction: discord.Interaction, player: discord.Member
     embed = discord.Embed(title="🔄 Player Removed — Ranks Cascaded", color=0xff4444)
     embed.description = "\n".join(log)
     await interaction.followup.send(embed=embed)
+
+@tree.command(name="removebyid", description="Remove a player by user ID (use when player left the server)")
+@is_admin()
+@app_commands.describe(user_id="The Discord user ID of the player to remove")
+async def removebyid(interaction: discord.Interaction, user_id: str):
+    uid = user_id.strip().strip("<@!>").strip()
+    await interaction.response.defer()
+
+    uid = user_id.strip().strip("<@!>").strip()
+    p = get_player(uid)
+    if not p:
+        await interaction.followup.send(f"❌ No player found with ID **{uid}**!")
+        return
+
+    removed_tier = p["tier"]
+    removed_rank = p["rank_in_tier"]
+
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("DELETE FROM players WHERE name = %s", (uid,))
+    conn.commit()
+    conn.close()
+
+    log = [f"🗑️ **{uid}** removed from **{removed_tier}** (Rank {removed_rank})"]
+
+    current_tier_idx = tier_index(removed_tier)
+
+    while current_tier_idx < len(TIERS) - 1:
+        current_tier = TIERS[current_tier_idx]
+        next_tier = TIERS[current_tier_idx + 1]
+
+        players_in_current = get_tier_players(current_tier)
+        conn = get_db()
+        c = conn.cursor()
+        for i, p in enumerate(players_in_current):
+            c.execute("UPDATE players SET rank_in_tier = %s WHERE name = %s", (i + 1, p["name"]))
+        conn.commit()
+        conn.close()
+
+        players_in_current = get_tier_players(current_tier)
+        if len(players_in_current) >= 4:
+            break
+
+        players_in_next = get_tier_players(next_tier)
+        if not players_in_next:
+            log.append(f"⚠️ **{next_tier}** is empty, no one to promote.")
+            break
+
+        promoted = players_in_next[0]
+        new_rank = len(players_in_current) + 1
+
+        conn = get_db()
+        c = conn.cursor()
+        c.execute(
+            "UPDATE players SET tier = %s, rank_in_tier = %s, round_wins = 0, round_losses = 0, round_done = 0 WHERE name = %s",
+            (current_tier, new_rank, promoted["name"])
+        )
+        conn.commit()
+        conn.close()
+
+        log.append(f"⬆️ {get_display(interaction.guild, get_uid(promoted['name']))} moved from **{next_tier}** rank 1 → **{current_tier}** rank {new_rank}")
+
+        players_in_next = get_tier_players(next_tier)
+        conn = get_db()
+        c = conn.cursor()
+        for i, p in enumerate(players_in_next):
+            c.execute("UPDATE players SET rank_in_tier = %s WHERE name = %s", (i + 1, p["name"]))
+        conn.commit()
+        conn.close()
+
+        current_tier_idx += 1
+
+    last_tier = TIERS[-1]
+    players_last = get_tier_players(last_tier)
+    conn = get_db()
+    c = conn.cursor()
+    for i, p in enumerate(players_last):
+        c.execute("UPDATE players SET rank_in_tier = %s WHERE name = %s", (i + 1, p["name"]))
+    conn.commit()
+    conn.close()
+
+    log.append(f"\n✅ A spot is now open in **{TIERS[-1]}**. Use `/addplayer` to fill it!")
+
+    embed = discord.Embed(title="🔄 Player Removed — Ranks Cascaded", color=0xff4444)
+    embed.description = "\n".join(log)
+    await interaction.followup.send(embed=embed)
+
+@tree.command(name="playerids", description="Toon alle spelers in een tier met hun Discord ID (admin only)")
+@is_admin()
+@app_commands.describe(tier="Select a tier")
+@app_commands.autocomplete(tier=tier_autocomplete)
+async def playerids(interaction: discord.Interaction, tier: str):
+    await interaction.response.defer(ephemeral=True)
+    tier = tier.title()
+    if tier not in TIERS:
+        await interaction.followup.send("❌ Invalid tier!", ephemeral=True)
+        return
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT * FROM players WHERE tier = %s ORDER BY rank_in_tier ASC", (tier,))
+    players = [dict(p) for p in c.fetchall()]
+    conn.close()
+    if not players:
+        await interaction.followup.send(f"❌ No players in **{tier}**!", ephemeral=True)
+        return
+    lines = [f"**{tier} — Player IDs:**"]
+    for p in players:
+        lines.append(f"rank{p['rank_in_tier']}: `{p['name']}` — {get_display(interaction.guild, p['name'])}")
+    await interaction.followup.send("\n".join(lines), ephemeral=True)
 
 # ─────────────────────────────────────────
 # BOT EVENTS
