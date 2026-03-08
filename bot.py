@@ -1208,13 +1208,25 @@ async def setstats(interaction: discord.Interaction, player: discord.Member,
     c.execute(f"UPDATE players SET {', '.join(updates)} WHERE name = %s", values)
     conn.commit()
 
-    if rank is not None:
+    if rank is not None or tier is not None:
         target_tier = tier if tier else p["tier"]
-        c.execute(
-            "UPDATE players SET rank_in_tier = rank_in_tier + 1 WHERE tier = %s AND rank_in_tier = %s AND name != %s",
-            (target_tier, rank, uid)
-        )
+        new_rank = rank if rank is not None else p["rank_in_tier"]
+        # Haal alle spelers op in de nieuwe tier
+        c.execute("SELECT name, rank_in_tier FROM players WHERE tier = %s ORDER BY rank_in_tier ASC", (target_tier,))
+        tier_players = [dict(r) for r in c.fetchall()]
+        # Bouw volgorde: zet de gewijzigde speler op new_rank en schuif de rest op
+        others = [r["name"] for r in tier_players if r["name"] != uid]
+        others.insert(new_rank - 1, uid)
+        for i, name in enumerate(others):
+            c.execute("UPDATE players SET rank_in_tier = %s WHERE name = %s", (i + 1, name))
         conn.commit()
+        # Als tier veranderd is herbereken ook de oude tier
+        if tier is not None and tier != p["tier"]:
+            c.execute("SELECT name FROM players WHERE tier = %s ORDER BY rank_in_tier ASC", (p["tier"],))
+            old_tier_players = [r["name"] for r in c.fetchall()]
+            for i, name in enumerate(old_tier_players):
+                c.execute("UPDATE players SET rank_in_tier = %s WHERE name = %s", (i + 1, name))
+            conn.commit()
 
     conn.close()
 
