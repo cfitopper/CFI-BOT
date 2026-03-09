@@ -755,14 +755,14 @@ async def updatetier(interaction: discord.Interaction, tier: str, remove_losers:
             c.execute("UPDATE players SET next_tier = %s WHERE name = %s", (new_tier, name))
             results.append(f"📉 {get_display(interaction.guild, get_uid(name))} → **{new_tier}**")
         else:
-            results.append(f"➡️ {get_display(interaction.guild, get_uid(name))} blijft in **{tier}**")
+            results.append(f"➡️ {get_display(interaction.guild, get_uid(name))} stays in **{tier}**")
 
     conn.commit()
     conn.close()
 
     embed = discord.Embed(title=f"🔄 Tier Update — {tier}", color=0xff9900)
     embed.description = "\n".join(results)
-    embed.set_footer(text="Gebruik /updateall als alle tiers gedaan zijn om iedereen te verplaatsen.")
+    embed.set_footer(text="Use /updateall when all tiers are done to move everyone.")
 
     await interaction.followup.send(embed=embed)
     await send_announcement(embed.description)
@@ -924,7 +924,7 @@ async def alltiers(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed)
 
 
-@tree.command(name="ranking", description="Toon alle tiers met alleen spelersnamen")
+@tree.command(name="ranking", description="Show all tiers with player names only")
 async def ranking(interaction: discord.Interaction):
     conn = get_db()
     c = conn.cursor()
@@ -964,7 +964,7 @@ async def ranking(interaction: discord.Interaction):
     embeds.append(current_embed)
     await interaction.response.send_message(embeds=embeds)
 
-@tree.command(name="updateall", description="Verplaats iedereen naar nieuwe tier en reset stats (admin only)")
+@tree.command(name="updateall", description="Move everyone to their new tier and reset stats (admin only)")
 @is_cfi_dev()
 async def updateall(interaction: discord.Interaction):
     await interaction.response.defer()
@@ -1055,7 +1055,7 @@ async def updateall(interaction: discord.Interaction):
             chunks.append(current)
         return chunks
 
-    embed = discord.Embed(title="🔄 Nieuwe Ronde Gestart!", color=0xff9900)
+    embed = discord.Embed(title="🔄 New Round Started!", color=0xff9900)
     if promo_list:
         chunks = make_chunks([f"🎉 {get_display(interaction.guild, get_uid(n))} → **{t}**" for n, t in promo_list])
         for i, chunk in enumerate(chunks):
@@ -1064,7 +1064,7 @@ async def updateall(interaction: discord.Interaction):
         chunks = make_chunks([f"📉 {get_display(interaction.guild, get_uid(n))} → **{t}**" for n, t in demo_list])
         for i, chunk in enumerate(chunks):
             embed.add_field(name="📉 Demotions" if i == 0 else "​", value=chunk, inline=False)
-    embed.set_footer(text="Alle round stats gereset. Nieuwe ronde kan beginnen!")
+    embed.set_footer(text="All round stats reset. New round can begin!")
     await interaction.followup.send(embed=embed)
 
 
@@ -1486,7 +1486,7 @@ async def removebyid(interaction: discord.Interaction, user_id: str):
     embed.description = "\n".join(log)
     await interaction.followup.send(embed=embed)
 
-@tree.command(name="playerids", description="Toon alle spelers in een tier met hun Discord ID (admin only)")
+@tree.command(name="playerids", description="Show all players in a tier with their Discord ID (admin only)")
 @is_admin()
 @app_commands.describe(tier="Select a tier")
 @app_commands.autocomplete(tier=tier_autocomplete)
