@@ -164,9 +164,22 @@ def generate_ranked_banner(
     bg = bg_orig.resize((W, H), Image.LANCZOS)
     draw = ImageDraw.Draw(bg)
 
+    font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
     try:
-        font_score = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 400)
-        font_name  = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 20)
+        font_name = ImageFont.truetype(font_path, 20)
+        # Dynamisch font size zodat de score altijd goed past tussen de avatars
+        score_text_preview = f"{score_winner} - {score_loser}"
+        max_w = W - 420  # ruimte tussen de twee avatars
+        max_h = H - 60
+        size = 200
+        while size > 40:
+            font_score = ImageFont.truetype(font_path, size)
+            tmp_draw = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+            bb = tmp_draw.textbbox((0, 0), score_text_preview, font=font_score)
+            tw, th = bb[2] - bb[0], bb[3] - bb[1]
+            if tw <= max_w and th <= max_h:
+                break
+            size -= 10
     except Exception:
         font_score = font_name = ImageFont.load_default()
 
@@ -729,18 +742,7 @@ async def updatetier(interaction: discord.Interaction, tier: str, remove_losers:
 
     # Sorteer op rank_in_tier
     players.sort(key=lambda x: x["rank_in_tier"])
-    n = len(players)
     current_idx = tier_index(tier)
-
-    if n >= 4:
-        promo_count = 2
-        demo_count  = 2
-    elif n == 3:
-        promo_count = 1
-        demo_count  = 1
-    else:
-        promo_count = 0
-        demo_count  = 0
 
     for p in players:
         name = p["name"]
@@ -1011,17 +1013,14 @@ async def updateall(interaction: discord.Interaction):
     for tier in TIERS:
         tier_players = [p for p in all_players_rerank if p["tier"] == tier]
         demoted_in  = [p for p in tier_players if p["name"] in demoted_names]
-        stayers     = [p for p in tier_players if p["name"] not in demoted_names and p["name"] not in promoted_names]
         promoted_in = [p for p in tier_players if p["name"] in promoted_names]
 
-        # Gedegradeerden: meeste wins eerst (1W2L beter dan 0W2L) → rank1 en rank2
+        # Demoted: most wins first (1W/2L before 0W/2L) → rank 1 and 2
         demoted_in.sort(key=lambda p: -round_stats[p["name"]]["round_wins"])
-        # Stayers: sorteer ook op record (meeste wins en minste losses)
-        stayers.sort(key=lambda p: (-round_stats[p["name"]]["round_wins"], round_stats[p["name"]]["round_losses"]))
-        # Gepromoveerden: minste losses eerst (2W0L beter dan 2W1L) → rank3 en rank4
+        # Promoted: fewest losses first (2W/0L before 2W/1L) → rank 3 and 4
         promoted_in.sort(key=lambda p: round_stats[p["name"]]["round_losses"])
 
-        ordered = demoted_in + stayers + promoted_in
+        ordered = demoted_in + promoted_in
         for new_rank, p in enumerate(ordered, start=1):
             c.execute("UPDATE players SET rank_in_tier = %s WHERE name = %s", (new_rank, p["name"]))
     conn.commit()
