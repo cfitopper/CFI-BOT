@@ -649,25 +649,52 @@ async def unscore(interaction: discord.Interaction, player1: discord.Member, pla
         goals_winner = match["score2"]
         goals_loser = match["score1"]
 
-    c.execute("""
-        UPDATE players SET
-            wins = GREATEST(wins - 1, 0),
-            goals = GREATEST(goals - %s, 0),
-            goals_against = GREATEST(goals_against - %s, 0),
-            round_wins = GREATEST(round_wins - 1, 0),
-            round_done = 0
-        WHERE name = %s
-    """, (goals_winner, goals_loser, winner))
+    c.execute("SELECT tier FROM players WHERE name = %s", (winner,))
+    row = c.fetchone()
+    in_golden_boot_tier = row["tier"] in GOLDEN_BOOT_TIERS if row else False
 
-    c.execute("""
-        UPDATE players SET
-            losses = GREATEST(losses - 1, 0),
-            goals = GREATEST(goals - %s, 0),
-            goals_against = GREATEST(goals_against - %s, 0),
-            round_losses = GREATEST(round_losses - 1, 0),
-            round_done = 0
-        WHERE name = %s
-    """, (goals_loser, goals_winner, loser))
+    if in_golden_boot_tier:
+        c.execute("""
+            UPDATE players SET
+                wins = GREATEST(wins - 1, 0),
+                goals = GREATEST(goals - %s, 0),
+                goals_against = GREATEST(goals_against - %s, 0),
+                golden_boot_goals = GREATEST(golden_boot_goals - %s, 0),
+                round_wins = GREATEST(round_wins - 1, 0),
+                round_done = 0
+            WHERE name = %s
+        """, (goals_winner, goals_loser, goals_winner, winner))
+
+        c.execute("""
+            UPDATE players SET
+                losses = GREATEST(losses - 1, 0),
+                goals = GREATEST(goals - %s, 0),
+                goals_against = GREATEST(goals_against - %s, 0),
+                golden_boot_goals = GREATEST(golden_boot_goals - %s, 0),
+                round_losses = GREATEST(round_losses - 1, 0),
+                round_done = 0
+            WHERE name = %s
+        """, (goals_loser, goals_winner, goals_loser, loser))
+    else:
+        c.execute("""
+            UPDATE players SET
+                wins = GREATEST(wins - 1, 0),
+                goals = GREATEST(goals - %s, 0),
+                goals_against = GREATEST(goals_against - %s, 0),
+                round_wins = GREATEST(round_wins - 1, 0),
+                round_done = 0
+            WHERE name = %s
+        """, (goals_winner, goals_loser, winner))
+
+        c.execute("""
+            UPDATE players SET
+                losses = GREATEST(losses - 1, 0),
+                goals = GREATEST(goals - %s, 0),
+                goals_against = GREATEST(goals_against - %s, 0),
+                round_losses = GREATEST(round_losses - 1, 0),
+                round_done = 0
+            WHERE name = %s
+        """, (goals_loser, goals_winner, loser))
 
     c.execute("DELETE FROM matches WHERE id = %s", (match["id"],))
 
@@ -1002,6 +1029,7 @@ async def updateall(interaction: discord.Interaction):
     # Sla overview op
     c.execute("SELECT * FROM players ORDER BY tier, rank_in_tier ASC")
     all_players_after = [dict(p) for p in c.fetchall()]
+    c.execute("DELETE FROM matches")
     c.execute("DELETE FROM overview_ranking")
     position = 1
     for tier in TIERS:
