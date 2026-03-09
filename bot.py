@@ -164,7 +164,9 @@ def generate_ranked_banner(
     bg = bg_orig.resize((W, H), Image.LANCZOS)
     draw = ImageDraw.Draw(bg)
 
-    font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+    font_path = os.path.join(os.path.dirname(__file__), "Roboto-Bold.ttf")
+    if not os.path.exists(font_path):
+        font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
     try:
         font_name  = ImageFont.truetype(font_path, 20)
         font_score = ImageFont.truetype(font_path, 180)
@@ -1777,10 +1779,6 @@ async def rankedscore(interaction: discord.Interaction, opponent: discord.Member
     await interaction.response.defer()
     uid = str(interaction.user.id)
     opp_uid = str(opponent.id)
-
-    if goals_you == goals_opponent:
-        await interaction.followup.send("❌ Draws are not allowed!")
-        return
 
     conn = get_db()
     c = conn.cursor()
