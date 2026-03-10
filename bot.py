@@ -1809,50 +1809,6 @@ def has_ranked_role(interaction: discord.Interaction) -> bool:
         return False
     return role in member.roles
 
-@tree.command(name="rankedmatchmaking", description="Open anonymous matchmaking for Ranked")
-async def rankedmatchmaking(interaction: discord.Interaction):
-    await interaction.response.defer()
-    if interaction.channel.name not in ["ranked-matchmaking-bot", "test"]:
-        await interaction.followup.send("❌ This command can only be used in #ranked-matchmaking-bot!", ephemeral=True)
-        return
-    if not has_ranked_role(interaction):
-        await interaction.followup.send("❌ You need the **CFI - Ranked** role to use this command. React with ⚔️ to get it!", ephemeral=True)
-        return
-    uid = str(interaction.user.id)
-    conn = get_db()
-    c = conn.cursor()
-    c.execute("SELECT * FROM ranked_players WHERE name = %s", (uid,))
-    p = c.fetchone()
-    conn.close()
-    if not p:
-        await interaction.followup.send("❌ You are not registered for Ranked! Use /rankedregister first.", ephemeral=True)
-        return
-
-    rank_name = get_rank_display(dict(p)["elo"])
-
-    embed = discord.Embed(title="🕵️ Ranked Matchmaking", color=0x5865F2)
-    embed.description = (
-        "An **anonymous person** is looking for a match!\n"
-        "Who could that be? 👀\n\n"
-        "React with ⚔️ to **accept** or ❌ to **cancel**.\n\n"
-        f"🏅 **Hint:** {rank_name}"
-    )
-    embed.set_footer(text="Anonymous")
-
-    await interaction.followup.send("✅", ephemeral=True)
-    if RANKED_WEBHOOK_URL:
-        async with aiohttp.ClientSession() as session:
-            webhook = discord.Webhook.from_url(RANKED_WEBHOOK_URL, session=session)
-            msg = await webhook.send(embed=embed, username="Anonymous", wait=True)
-    else:
-        msg = await interaction.channel.send(embed=embed)
-
-    await msg.add_reaction("⚔️")
-    await msg.add_reaction("❌")
-    active_matchmaking[msg.id] = uid
-
-    asyncio.ensure_future(on_timeout_matchmaking(msg.id, interaction.channel))
-
 async def on_timeout_matchmaking(message_id, channel):
     await asyncio.sleep(600)
     if message_id in active_matchmaking:
@@ -2370,7 +2326,7 @@ async def rankedremove(interaction: discord.Interaction, player: discord.Member)
     conn.close()
     await interaction.followup.send(f"✅ **{player.display_name}** has been removed from CFI Ranked.", ephemeral=True)
 
-@tree.command(name="rankedmatchmakingsetup", description="Post the matchmaking button message (admin only)")
+@tree.command(name="rankedmatchmaking", description="Post the matchmaking button message (admin only)")
 @is_admin()
 async def rankedmatchmakingsetup(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
