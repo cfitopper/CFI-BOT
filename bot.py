@@ -15,6 +15,7 @@ from PIL import Image, ImageDraw, ImageFont
 # SETTINGS
 # ─────────────────────────────────────────
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
+RANKED_WEBHOOK_URL = os.environ.get("RANKED_WEBHOOK_URL", "")
 ADMIN_ROLES = ["Admin", "CFI - Dev", "BOSS", "Head-moderator (crew)"]
 ANNOUNCEMENT_CHANNEL_ID = 0
 BANNER_PATH = os.path.join(os.path.dirname(__file__), "cfi_banner.png")
@@ -1844,9 +1845,18 @@ async def rankedmatchmaking(interaction: discord.Interaction):
     view.add_item(accept_btn)
     view.add_item(cancel_btn)
 
-    # Delete the interaction response immediately to hide who used the command
     await interaction.followup.send("✅", ephemeral=True)
-    msg = await interaction.channel.send(embed=embed, view=view)
+    if RANKED_WEBHOOK_URL:
+        async with aiohttp.ClientSession() as session:
+            webhook = discord.Webhook.from_url(RANKED_WEBHOOK_URL, session=session)
+            msg = await webhook.send(
+                embed=embed,
+                view=view,
+                username="Anonymous",
+                wait=True
+            )
+    else:
+        msg = await interaction.channel.send(embed=embed, view=view)
     active_matchmaking[msg.id] = uid
 
     async def on_timeout_matchmaking(message_id, channel):
