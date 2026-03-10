@@ -1851,17 +1851,17 @@ async def rankedmatchmaking(interaction: discord.Interaction):
     await msg.add_reaction("❌")
     active_matchmaking[msg.id] = uid
 
-    async def on_timeout_matchmaking(message_id, channel):
-        await asyncio.sleep(600)
-        if message_id in active_matchmaking:
-            del active_matchmaking[message_id]
-            try:
-                msg_obj = await channel.fetch_message(message_id)
-                await msg_obj.delete()
-            except Exception:
-                pass
-
     asyncio.ensure_future(on_timeout_matchmaking(msg.id, interaction.channel))
+
+async def on_timeout_matchmaking(message_id, channel):
+    await asyncio.sleep(600)
+    if message_id in active_matchmaking:
+        del active_matchmaking[message_id]
+        try:
+            msg_obj = await channel.fetch_message(message_id)
+            await msg_obj.delete()
+        except Exception:
+            pass
 
 @tree.command(name="rankedscore", description="Submit a ranked match score")
 @app_commands.describe(opponent="Your opponent", goals_you="Your goals", goals_opponent="Opponent goals")
@@ -1939,6 +1939,42 @@ async def on_interaction(interaction: discord.Interaction):
     custom_id = interaction.data.get("custom_id", "")
     uid = str(interaction.user.id)
     msg_id = interaction.message.id
+
+    # ---- FIND MATCH BUTTON ----
+    if custom_id == "ranked_find_match":
+        uid = str(interaction.user.id)
+        if not has_ranked_role(interaction):
+            await interaction.response.send_message("❌ You need the **CFI - Ranked** role to use this. React with ⚔️ to get it!", ephemeral=True)
+            return
+        conn = get_db()
+        c = conn.cursor()
+        c.execute("SELECT * FROM ranked_players WHERE name = %s", (uid,))
+        p = c.fetchone()
+        conn.close()
+        if not p:
+            await interaction.response.send_message("❌ You are not registered for Ranked!", ephemeral=True)
+            return
+        rank_name = get_rank_display(dict(p)["elo"])
+        embed = discord.Embed(title="🕵️ Ranked Matchmaking", color=0x5865F2)
+        embed.description = (
+            "An **anonymous person** is looking for a match!\n"
+            "Who could that be? 👀\n\n"
+            "React with ⚔️ to **accept** or ❌ to **cancel**.\n\n"
+            f"🏅 **Hint:** {rank_name}"
+        )
+        embed.set_footer(text="Anonymous")
+        await interaction.response.send_message("✅", ephemeral=True)
+        if RANKED_WEBHOOK_URL:
+            async with aiohttp.ClientSession() as session:
+                webhook = discord.Webhook.from_url(RANKED_WEBHOOK_URL, session=session)
+                msg = await webhook.send(embed=embed, username="Anonymous", wait=True)
+        else:
+            msg = await interaction.channel.send(embed=embed)
+        await msg.add_reaction("⚔️")
+        await msg.add_reaction("❌")
+        active_matchmaking[msg.id] = uid
+        asyncio.ensure_future(on_timeout_matchmaking(msg.id, interaction.channel))
+        return
 
     # ---- SCORE CONFIRM ----
     if custom_id == "ranked_confirm":
@@ -2292,6 +2328,21 @@ async def rankedremove(interaction: discord.Interaction, player: discord.Member)
     conn.commit()
     conn.close()
     await interaction.followup.send(f"✅ **{player.display_name}** has been removed from CFI Ranked.", ephemeral=True)
+
+@tree.command(name="rankedmatchmakingsetup", description="Post the matchmaking button message (admin only)")
+@is_admin()
+async def rankedmatchmakingsetup(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    embed = discord.Embed(title="⚔️ Ranked Matchmaking", color=0x5865F2)
+    embed.description = (
+        "Looking for a ranked match?\n"
+        "Click the button below to open anonymous matchmaking!"
+    )
+    view = discord.ui.View(timeout=None)
+    btn = discord.ui.Button(label="🔍 Find Match", style=discord.ButtonStyle.blurple, custom_id="ranked_find_match")
+    view.add_item(btn)
+    await interaction.channel.send(embed=embed, view=view)
+    await interaction.followup.send("✅ Matchmaking setup message sent!", ephemeral=True)
 
 @app.route("/")
 def home():
