@@ -1846,17 +1846,7 @@ async def rankedmatchmaking(interaction: discord.Interaction):
     view.add_item(cancel_btn)
 
     await interaction.followup.send("✅", ephemeral=True)
-    if RANKED_WEBHOOK_URL:
-        async with aiohttp.ClientSession() as session:
-            webhook = discord.Webhook.from_url(RANKED_WEBHOOK_URL, session=session)
-            msg = await webhook.send(
-                embed=embed,
-                view=view,
-                username="Anonymous",
-                wait=True
-            )
-    else:
-        msg = await interaction.channel.send(embed=embed, view=view)
+    msg = await interaction.channel.send(embed=embed, view=view)
     active_matchmaking[msg.id] = uid
 
     async def on_timeout_matchmaking(message_id, channel):
