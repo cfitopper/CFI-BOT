@@ -1644,14 +1644,14 @@ def calc_elo(winner_elo, loser_elo):
     return new_winner, new_loser, gain, loss
 
 def calc_elo_draw(p1_elo, p2_elo):
+    # Both always gain elo on a draw, higher elo gains less
+    K = 32
     expected_1 = 1 / (1 + 10 ** ((p2_elo - p1_elo) / 400))
     expected_2 = 1 - expected_1
-    new_p1 = round(p1_elo + RANKED_K * (0.5 - expected_1))
-    new_p2 = round(p2_elo + RANKED_K * (0.5 - expected_2))
-    new_p1 = max(0, new_p1)
-    new_p2 = max(0, new_p2)
-    change_1 = new_p1 - p1_elo
-    change_2 = new_p2 - p2_elo
+    change_1 = max(1, round(K * (0.5 - expected_1)))
+    change_2 = max(1, round(K * (0.5 - expected_2)))
+    new_p1 = p1_elo + change_1
+    new_p2 = p2_elo + change_2
     return new_p1, new_p2, change_1, change_2
 
 def setup_ranked_db(conn):
