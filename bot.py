@@ -37,6 +37,7 @@ TIERS = [
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
+intents.reactions = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
@@ -1645,11 +1646,17 @@ def calc_elo(winner_elo, loser_elo):
 
 def calc_elo_draw(p1_elo, p2_elo):
     # Both always gain elo on a draw, higher elo gains less
-    K = 32
-    expected_1 = 1 / (1 + 10 ** ((p2_elo - p1_elo) / 400))
-    expected_2 = 1 - expected_1
-    change_1 = max(1, round(K * (0.5 - expected_1)))
-    change_2 = max(1, round(K * (0.5 - expected_2)))
+    base = 12
+    diff = abs(p1_elo - p2_elo)
+    reduction = min(6, round(diff / 150))
+    if p1_elo > p2_elo:
+        change_1 = max(6, base - reduction)
+        change_2 = base
+    elif p2_elo > p1_elo:
+        change_1 = base
+        change_2 = max(6, base - reduction)
+    else:
+        change_1 = change_2 = base
     new_p1 = p1_elo + change_1
     new_p2 = p2_elo + change_2
     return new_p1, new_p2, change_1, change_2
@@ -1774,9 +1781,23 @@ async def rankedleaderboard(interaction: discord.Interaction):
     embed.description = chr(10).join(lines)
     await interaction.followup.send(embed=embed)
 
+
+def has_ranked_role(interaction: discord.Interaction) -> bool:
+    member = interaction.user
+    allowed = ADMIN_ROLES + ["League Moderator (crew)", "Moderator (crew)"]
+    if any(r.name in allowed for r in member.roles):
+        return True
+    role = discord.utils.get(interaction.guild.roles, name="CFI - Ranked")
+    if not role:
+        return False
+    return role in member.roles
+
 @tree.command(name="rankedmatchmaking", description="Open anonymous matchmaking for Ranked")
 async def rankedmatchmaking(interaction: discord.Interaction):
     await interaction.response.defer()
+    if not has_ranked_role(interaction):
+        await interaction.followup.send("❌ You need the **CFI - Ranked** role to use this command. React with ⚔️ to get it!", ephemeral=True)
+        return
     uid = str(interaction.user.id)
     conn = get_db()
     c = conn.cursor()
@@ -1823,6 +1844,9 @@ async def rankedmatchmaking(interaction: discord.Interaction):
 @app_commands.describe(opponent="Your opponent", goals_you="Your goals", goals_opponent="Opponent goals")
 async def rankedscore(interaction: discord.Interaction, opponent: discord.Member, goals_you: int, goals_opponent: int):
     await interaction.response.defer()
+    if not has_ranked_role(interaction):
+        await interaction.followup.send("❌ You need the **CFI - Ranked** role to use this command. React with ⚔️ to get it!", ephemeral=True)
+        return
     uid = str(interaction.user.id)
     opp_uid = str(opponent.id)
 
@@ -2116,6 +2140,58 @@ async def rankedsetstats(interaction: discord.Interaction, player: discord.Membe
     conn.close()
     await interaction.response.send_message(f"✅ Updated **{player.display_name}**: {' | '.join(changed)}")
 
+
+
+# ── RANKED REACTION ROLE ──
+ranked_reaction_messages = set()
+
+@tree.command(name="rankedreactionrole", description="Send a reaction role message for CFI Ranked (admin only)")
+@is_admin()
+async def rankedreactionrole(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    embed = discord.Embed(
+        title="⚔️ CFI Ranked",
+        description="React with ⚔️ to get access to CFI Ranked!",
+        color=0x5865F2
+    )
+    msg = await interaction.channel.send(embed=embed)
+    await msg.add_reaction("⚔️")
+    ranked_reaction_messages.add(msg.id)
+    await interaction.followup.send(f"✅ Reaction role message sent!", ephemeral=True)
+
+@bot.event
+async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
+    if payload.member and payload.member.bot:
+        return
+    if payload.message_id not in ranked_reaction_messages:
+        return
+    if str(payload.emoji) != "⚔️":
+        return
+    guild = bot.get_guild(payload.guild_id)
+    if not guild:
+        return
+    role = discord.utils.get(guild.roles, name="CFI - Ranked")
+    if not role:
+        return
+    member = payload.member
+    if member and role not in member.roles:
+        await member.add_roles(role)
+
+@bot.event
+async def on_raw_reaction_remove(payload: discord.RawReactionActionEvent):
+    if payload.message_id not in ranked_reaction_messages:
+        return
+    if str(payload.emoji) != "⚔️":
+        return
+    guild = bot.get_guild(payload.guild_id)
+    if not guild:
+        return
+    role = discord.utils.get(guild.roles, name="CFI - Ranked")
+    if not role:
+        return
+    member = guild.get_member(payload.user_id)
+    if member and role in member.roles:
+        await member.remove_roles(role)
 
 @app.route("/")
 def home():
