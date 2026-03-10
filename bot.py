@@ -1643,6 +1643,17 @@ def calc_elo(winner_elo, loser_elo):
     loss = loser_elo - new_loser
     return new_winner, new_loser, gain, loss
 
+def calc_elo_draw(p1_elo, p2_elo):
+    expected_1 = 1 / (1 + 10 ** ((p2_elo - p1_elo) / 400))
+    expected_2 = 1 - expected_1
+    new_p1 = round(p1_elo + RANKED_K * (0.5 - expected_1))
+    new_p2 = round(p2_elo + RANKED_K * (0.5 - expected_2))
+    new_p1 = max(0, new_p1)
+    new_p2 = max(0, new_p2)
+    change_1 = new_p1 - p1_elo
+    change_2 = new_p2 - p2_elo
+    return new_p1, new_p2, change_1, change_2
+
 def setup_ranked_db(conn):
     c = conn.cursor()
     c.execute("""
@@ -1650,7 +1661,8 @@ def setup_ranked_db(conn):
             name TEXT PRIMARY KEY,
             elo INTEGER DEFAULT 0,
             wins INTEGER DEFAULT 0,
-            losses INTEGER DEFAULT 0
+            losses INTEGER DEFAULT 0,
+            draws INTEGER DEFAULT 0
         )
     """)
     c.execute("""
@@ -1664,6 +1676,12 @@ def setup_ranked_db(conn):
             date TEXT
         )
     """)
+    # Migration: add draws column if it doesn't exist yet
+    try:
+        c.execute("ALTER TABLE ranked_players ADD COLUMN draws INTEGER DEFAULT 0")
+        conn.commit()
+    except Exception:
+        pass
     conn.commit()
 
 pending_ranked_scores = {}
@@ -1680,7 +1698,7 @@ async def rankedregister(interaction: discord.Interaction):
         conn.close()
         await interaction.followup.send("❌ You are already registered for Ranked!", ephemeral=True)
         return
-    c.execute("INSERT INTO ranked_players (name, elo, wins, losses) VALUES (%s, 0, 0, 0)", (uid,))
+    c.execute("INSERT INTO ranked_players (name, elo, wins, losses, draws) VALUES (%s, 0, 0, 0, 0)", (uid,))
     conn.commit()
     conn.close()
     await interaction.followup.send("✅ You are now registered for CFI Ranked! Starting Elo: **0** (Bronze)", ephemeral=True)
@@ -1706,7 +1724,8 @@ async def rankedprofile(interaction: discord.Interaction, player: discord.Member
     conn.close()
 
     rank_name = get_ranked_rank(p["elo"])
-    total = p["wins"] + p["losses"]
+    d = p.get("draws", 0) or 0
+    total = p["wins"] + p["losses"] + d
     winrate = round((p["wins"] / total * 100)) if total > 0 else 0
 
     embed = discord.Embed(title=f"⚽ {target.display_name}", color=0xffaa00)
@@ -1716,6 +1735,7 @@ async def rankedprofile(interaction: discord.Interaction, player: discord.Member
         f"**Global Position:** #{global_pos}\n"
         f"**Rank:** {rank_name}\n"
         f"**Wins:** {p['wins']}\n"
+        f"**Draws:** {d}\n"
         f"**Losses:** {p['losses']}\n"
         f"**Matches Played:** {total}\n"
         f"**Winrate:** {winrate}%"
@@ -1747,7 +1767,10 @@ async def rankedleaderboard(interaction: discord.Interaction):
         l = p.get("losses", 0) or 0
         total = w + l
         pct = round((w / total) * 100) if total > 0 else 0
-        lines.append(f"{medal} **{name}** — {p['elo']} pts ({rank_name}) | {w}W {l}L | Winrate {pct}%")
+        d = p.get("draws", 0) or 0
+        total = w + l + d
+        pct = round((w / total) * 100) if total > 0 else 0
+        lines.append(f"{medal} **{name}** — {p['elo']} pts ({rank_name}) | {w}W {d}D {l}L | Winrate {pct}%")
     embed.description = chr(10).join(lines)
     await interaction.followup.send(embed=embed)
 
@@ -1926,78 +1949,107 @@ async def on_interaction(interaction: discord.Interaction):
         p2_id = data["player2"]
         s1 = data["score1"]
         s2 = data["score2"]
-        winner_id = p1_id if s1 > s2 else p2_id
-        loser_id  = p2_id if s1 > s2 else p1_id
-        score_winner = max(s1, s2)
-        score_loser  = min(s1, s2)
+        is_draw = s1 == s2
 
         conn = get_db()
         c = conn.cursor()
-        c.execute("SELECT * FROM ranked_players WHERE name = %s", (winner_id,))
-        winner_data = dict(c.fetchone())
-        c.execute("SELECT * FROM ranked_players WHERE name = %s", (loser_id,))
-        loser_data = dict(c.fetchone())
+        c.execute("SELECT * FROM ranked_players WHERE name = %s", (p1_id,))
+        p1_data = dict(c.fetchone())
+        c.execute("SELECT * FROM ranked_players WHERE name = %s", (p2_id,))
+        p2_data = dict(c.fetchone())
 
-        new_winner_elo, new_loser_elo, gain, loss = calc_elo(winner_data["elo"], loser_data["elo"])
+        if is_draw:
+            new_p1_elo, new_p2_elo, change_1, change_2 = calc_elo_draw(p1_data["elo"], p2_data["elo"])
+            c.execute("UPDATE ranked_players SET elo = %s, draws = draws + 1 WHERE name = %s", (new_p1_elo, p1_id))
+            c.execute("UPDATE ranked_players SET elo = %s, draws = draws + 1 WHERE name = %s", (new_p2_elo, p2_id))
+            c.execute("""
+                INSERT INTO ranked_matches (player1, player2, score1, score2, elo_change, date)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (p1_id, p2_id, s1, s2, 0, datetime.now().isoformat()))
+        else:
+            winner_id = p1_id if s1 > s2 else p2_id
+            loser_id  = p2_id if s1 > s2 else p1_id
+            winner_data = p1_data if s1 > s2 else p2_data
+            loser_data  = p2_data if s1 > s2 else p1_data
+            new_winner_elo, new_loser_elo, gain, loss = calc_elo(winner_data["elo"], loser_data["elo"])
+            c.execute("UPDATE ranked_players SET elo = %s, wins = wins + 1 WHERE name = %s", (new_winner_elo, winner_id))
+            c.execute("UPDATE ranked_players SET elo = %s, losses = losses + 1 WHERE name = %s", (new_loser_elo, loser_id))
+            c.execute("""
+                INSERT INTO ranked_matches (player1, player2, score1, score2, elo_change, date)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (p1_id, p2_id, s1, s2, gain, datetime.now().isoformat()))
 
-        c.execute("UPDATE ranked_players SET elo = %s, wins = wins + 1 WHERE name = %s", (new_winner_elo, winner_id))
-        c.execute("UPDATE ranked_players SET elo = %s, losses = losses + 1 WHERE name = %s", (new_loser_elo, loser_id))
-        c.execute("""
-            INSERT INTO ranked_matches (player1, player2, score1, score2, elo_change, date)
-            VALUES (%s, %s, %s, %s, %s, %s)
-        """, (p1_id, p2_id, s1, s2, gain, datetime.now().isoformat()))
         conn.commit()
         conn.close()
-
         del pending_ranked_scores[msg_id]
 
-        winner_member = interaction.guild.get_member(int(winner_id))
-        loser_member  = interaction.guild.get_member(int(loser_id))
-        winner_name   = winner_member.display_name if winner_member else winner_id
-        loser_name    = loser_member.display_name  if loser_member  else loser_id
+        if is_draw:
+            p1_member = interaction.guild.get_member(int(p1_id))
+            p2_member = interaction.guild.get_member(int(p2_id))
+            p1_name = p1_member.display_name if p1_member else p1_id
+            p2_name = p2_member.display_name if p2_member else p2_id
+            p1_rank = get_ranked_rank(new_p1_elo)
+            p2_rank = get_ranked_rank(new_p2_elo)
 
-        winner_rank = get_ranked_rank(new_winner_elo)
-        loser_rank  = get_ranked_rank(new_loser_elo)
+            banner_file = None
+            try:
+                async with aiohttp.ClientSession() as session:
+                    p1_av_bytes = await fetch_avatar(session, p1_member.display_avatar.url if p1_member else None) if p1_member else None
+                    p2_av_bytes = await fetch_avatar(session, p2_member.display_avatar.url if p2_member else None) if p2_member else None
+                banner_io = generate_ranked_banner(
+                    winner_name=p1_name, loser_name=p2_name,
+                    score_winner=s1, score_loser=s2,
+                    winner_elo=new_p1_elo, loser_elo=new_p2_elo,
+                    elo_gain=change_1, elo_loss=-change_2,
+                    winner_rank=p1_rank, loser_rank=p2_rank,
+                    winner_avatar_bytes=p1_av_bytes, loser_avatar_bytes=p2_av_bytes,
+                )
+                banner_file = discord.File(banner_io, filename="ranked_result.png")
+            except Exception as e:
+                print(f"Banner generation error: {e}")
 
-        # ── generate banner and send everything in one message ──
-        banner_file = None
-        try:
-            async with aiohttp.ClientSession() as session:
-                winner_av_bytes = await fetch_avatar(
-                    session,
-                    winner_member.display_avatar.url if winner_member else None
-                ) if winner_member else None
-                loser_av_bytes = await fetch_avatar(
-                    session,
-                    loser_member.display_avatar.url if loser_member else None
-                ) if loser_member else None
-
-            banner_io = generate_ranked_banner(
-                winner_name=winner_name,
-                loser_name=loser_name,
-                score_winner=score_winner,
-                score_loser=score_loser,
-                winner_elo=new_winner_elo,
-                loser_elo=new_loser_elo,
-                elo_gain=gain,
-                elo_loss=loss,
-                winner_rank=winner_rank,
-                loser_rank=loser_rank,
-                winner_avatar_bytes=winner_av_bytes,
-                loser_avatar_bytes=loser_av_bytes,
+            embed = discord.Embed(title="🤝 Ranked Score Confirmed — Draw!", color=0xFFD700)
+            embed.description = (
+                f"<@{p1_id}> **{s1} - {s2}** <@{p2_id}>\n\n"
+                f"**{p1_name}**\n"
+                f"**Elo:** {new_p1_elo} pts ({p1_rank}) `{'+' if change_1 >= 0 else ''}{change_1}`\n\n"
+                f"**{p2_name}**\n"
+                f"**Elo:** {new_p2_elo} pts ({p2_rank}) `{'+' if change_2 >= 0 else ''}{change_2}`"
             )
-            banner_file = discord.File(banner_io, filename="ranked_result.png")
-        except Exception as e:
-            print(f"Banner generation error: {e}")
+        else:
+            winner_member = interaction.guild.get_member(int(winner_id))
+            loser_member  = interaction.guild.get_member(int(loser_id))
+            winner_name   = winner_member.display_name if winner_member else winner_id
+            loser_name    = loser_member.display_name  if loser_member  else loser_id
+            winner_rank = get_ranked_rank(new_winner_elo)
+            loser_rank  = get_ranked_rank(new_loser_elo)
 
-        embed = discord.Embed(title="✅ Ranked Score Confirmed!", color=0x00ff88)
-        embed.description = (
-            f"<@{winner_id}> **{score_winner} - {score_loser}** <@{loser_id}>\n\n"
-            f"🏆 **{winner_name}** wins!\n"
-            f"**Elo:** {new_winner_elo} pts ({winner_rank}) `+{gain}`\n\n"
-            f"**{loser_name}**\n"
-            f"**Elo:** {new_loser_elo} pts ({loser_rank}) `-{loss}`"
-        )
+            banner_file = None
+            try:
+                async with aiohttp.ClientSession() as session:
+                    winner_av_bytes = await fetch_avatar(session, winner_member.display_avatar.url if winner_member else None) if winner_member else None
+                    loser_av_bytes  = await fetch_avatar(session, loser_member.display_avatar.url  if loser_member  else None) if loser_member  else None
+                banner_io = generate_ranked_banner(
+                    winner_name=winner_name, loser_name=loser_name,
+                    score_winner=max(s1,s2), score_loser=min(s1,s2),
+                    winner_elo=new_winner_elo, loser_elo=new_loser_elo,
+                    elo_gain=gain, elo_loss=loss,
+                    winner_rank=winner_rank, loser_rank=loser_rank,
+                    winner_avatar_bytes=winner_av_bytes, loser_avatar_bytes=loser_av_bytes,
+                )
+                banner_file = discord.File(banner_io, filename="ranked_result.png")
+            except Exception as e:
+                print(f"Banner generation error: {e}")
+
+            embed = discord.Embed(title="✅ Ranked Score Confirmed!", color=0x00ff88)
+            embed.description = (
+                f"<@{winner_id}> **{max(s1,s2)} - {min(s1,s2)}** <@{loser_id}>\n\n"
+                f"🏆 **{winner_name}** wins!\n"
+                f"**Elo:** {new_winner_elo} pts ({winner_rank}) `+{gain}`\n\n"
+                f"**{loser_name}**\n"
+                f"**Elo:** {new_loser_elo} pts ({loser_rank}) `-{loss}`"
+            )
+
         if banner_file:
             embed.set_image(url="attachment://ranked_result.png")
             await interaction.response.edit_message(embed=embed, attachments=[banner_file], view=None)
