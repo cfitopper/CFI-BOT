@@ -1808,11 +1808,16 @@ async def rankedmatchmaking(interaction: discord.Interaction):
         await interaction.followup.send("❌ You are not registered for Ranked! Use /rankedregister first.", ephemeral=True)
         return
 
+    rank_name = get_ranked_rank(dict(p)["elo"])
+
     embed = discord.Embed(title="🕵️ Ranked Matchmaking", color=0x5865F2)
     embed.description = (
-        "An **anonymous player** is looking for a match!\n\n"
-        "Click **Accept** to play!"
+        "An **anonymous person** is looking for a match!\n"
+        "Who could that be? 👀\n\n"
+        "If you are interested, click **Accept**.\n\n"
+        f"🏅 **Hint:** {rank_name}"
     )
+    embed.set_footer(text="Anonymous")
 
     accept_btn = discord.ui.Button(label="Accept", style=discord.ButtonStyle.green, custom_id="ranked_accept")
     cancel_btn = discord.ui.Button(label="Cancel", style=discord.ButtonStyle.red, custom_id="ranked_cancel")
@@ -1820,7 +1825,9 @@ async def rankedmatchmaking(interaction: discord.Interaction):
     view.add_item(accept_btn)
     view.add_item(cancel_btn)
 
-    msg = await interaction.followup.send(embed=embed, view=view)
+    # Send as ephemeral first to hide who used the command then send public bot message
+    await interaction.followup.send("✅ Matchmaking opened!", ephemeral=True)
+    msg = await interaction.channel.send(embed=embed, view=view)
     active_matchmaking[msg.id] = uid
 
     async def on_timeout_matchmaking(message_id, channel):
@@ -1829,12 +1836,7 @@ async def rankedmatchmaking(interaction: discord.Interaction):
             del active_matchmaking[message_id]
             try:
                 msg_obj = await channel.fetch_message(message_id)
-                expired_embed = discord.Embed(
-                    title="❌ Matchmaking Expired",
-                    description="No one accepted the matchmaking request in time.",
-                    color=0xff4444
-                )
-                await msg_obj.edit(embed=expired_embed, view=None)
+                await msg_obj.delete()
             except Exception:
                 pass
 
@@ -1954,7 +1956,8 @@ async def on_interaction(interaction: discord.Interaction):
             await interaction.response.send_message("❌ Only the person who opened matchmaking can cancel it.", ephemeral=True)
             return
         del active_matchmaking[msg_id]
-        await interaction.response.edit_message(content="❌ Matchmaking cancelled.", embed=None, view=None)
+        await interaction.message.delete()
+        await interaction.response.send_message("❌ Matchmaking cancelled.", ephemeral=True)
 
     # ---- SCORE CONFIRM ----
     elif custom_id == "ranked_confirm":
