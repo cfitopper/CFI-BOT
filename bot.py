@@ -1959,21 +1959,67 @@ async def on_interaction(interaction: discord.Interaction):
         embed.description = (
             "An **anonymous person** is looking for a match!\n"
             "Who could that be? 👀\n\n"
-            "React with ⚔️ to **accept** or ❌ to **cancel**.\n\n"
+            "Click **Accept** if you want to play!\n\n"
             f"🏅 **Hint:** {rank_name}"
         )
         embed.set_footer(text="Anonymous")
+        accept_btn = discord.ui.Button(label="Accept", style=discord.ButtonStyle.green, custom_id="ranked_accept")
+        cancel_btn = discord.ui.Button(label="Cancel", style=discord.ButtonStyle.red, custom_id="ranked_cancel")
+        mm_view = discord.ui.View(timeout=600)
+        mm_view.add_item(accept_btn)
+        mm_view.add_item(cancel_btn)
         await interaction.response.send_message("✅", ephemeral=True)
         if RANKED_WEBHOOK_URL:
             async with aiohttp.ClientSession() as session:
                 webhook = discord.Webhook.from_url(RANKED_WEBHOOK_URL, session=session)
-                msg = await webhook.send(embed=embed, username="Anonymous", wait=True)
+                msg = await webhook.send(embed=embed, view=mm_view, username="Anonymous", wait=True)
         else:
-            msg = await interaction.channel.send(embed=embed)
-        await msg.add_reaction("⚔️")
-        await msg.add_reaction("❌")
+            msg = await interaction.channel.send(embed=embed, view=mm_view)
         active_matchmaking[msg.id] = uid
         asyncio.ensure_future(on_timeout_matchmaking(msg.id, interaction.channel))
+        return
+
+    # ---- MATCHMAKING ACCEPT ----
+    if custom_id == "ranked_accept":
+        if msg_id not in active_matchmaking:
+            await interaction.response.send_message("❌ This matchmaking session has expired.", ephemeral=True)
+            return
+        seeker_id = active_matchmaking[msg_id]
+        if uid == seeker_id:
+            await interaction.response.send_message("❌ You can't accept your own matchmaking!", ephemeral=True)
+            return
+        conn = get_db()
+        c = conn.cursor()
+        c.execute("SELECT * FROM ranked_players WHERE name = %s", (uid,))
+        accepter = c.fetchone()
+        conn.close()
+        if not accepter:
+            await interaction.response.send_message("❌ You are not registered for Ranked!", ephemeral=True)
+            return
+        seeker = interaction.guild.get_member(int(seeker_id))
+        accepter_member = interaction.guild.get_member(int(uid))
+        host = random.choice([seeker, accepter_member])
+        del active_matchmaking[msg_id]
+        match_embed = discord.Embed(title="✅ Match Found!", color=0x00ff88)
+        match_embed.description = (
+            f"**{seeker.display_name if seeker else seeker_id}** vs **{accepter_member.display_name if accepter_member else uid}**\n\n"
+            f"🏠 **Host:** {host.display_name if host else 'Unknown'}\n\n"
+            f"Use `/rankedscore` when the match is done!"
+        )
+        await interaction.response.edit_message(embed=match_embed, view=None)
+        return
+
+    # ---- MATCHMAKING CANCEL ----
+    elif custom_id == "ranked_cancel":
+        if msg_id not in active_matchmaking:
+            await interaction.response.send_message("❌ This session has expired.", ephemeral=True)
+            return
+        if uid != active_matchmaking[msg_id]:
+            await interaction.response.send_message("❌ Only the person who opened matchmaking can cancel it.", ephemeral=True)
+            return
+        del active_matchmaking[msg_id]
+        await interaction.message.delete()
+        await interaction.response.send_message("❌ Matchmaking cancelled.", ephemeral=True)
         return
 
     # ---- SCORE CONFIRM ----
