@@ -1795,6 +1795,9 @@ def has_ranked_role(interaction: discord.Interaction) -> bool:
 @tree.command(name="rankedmatchmaking", description="Open anonymous matchmaking for Ranked")
 async def rankedmatchmaking(interaction: discord.Interaction):
     await interaction.response.defer()
+    if interaction.channel.name != "ranked-matchmaking-bot":
+        await interaction.followup.send("❌ This command can only be used in #ranked-matchmaking-bot!", ephemeral=True)
+        return
     if not has_ranked_role(interaction):
         await interaction.followup.send("❌ You need the **CFI - Ranked** role to use this command. React with ⚔️ to get it!", ephemeral=True)
         return
@@ -1825,8 +1828,8 @@ async def rankedmatchmaking(interaction: discord.Interaction):
     view.add_item(accept_btn)
     view.add_item(cancel_btn)
 
-    # Send as ephemeral first to hide who used the command then send public bot message
-    await interaction.followup.send("✅ Matchmaking opened!", ephemeral=True)
+    # Delete the interaction response immediately to hide who used the command
+    await interaction.followup.send("✅", ephemeral=True)
     msg = await interaction.channel.send(embed=embed, view=view)
     active_matchmaking[msg.id] = uid
 
@@ -1846,6 +1849,9 @@ async def rankedmatchmaking(interaction: discord.Interaction):
 @app_commands.describe(opponent="Your opponent", goals_you="Your goals", goals_opponent="Opponent goals")
 async def rankedscore(interaction: discord.Interaction, opponent: discord.Member, goals_you: int, goals_opponent: int):
     await interaction.response.defer()
+    if interaction.channel.name != "ranked-score":
+        await interaction.followup.send("❌ This command can only be used in #ranked-score!", ephemeral=True)
+        return
     if not has_ranked_role(interaction):
         await interaction.followup.send("❌ You need the **CFI - Ranked** role to use this command. React with ⚔️ to get it!", ephemeral=True)
         return
