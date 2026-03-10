@@ -1910,22 +1910,22 @@ async def on_interaction(interaction: discord.Interaction):
         if not p:
             await interaction.response.send_message("❌ You are not registered for Ranked!", ephemeral=True)
             return
-        rank_name = get_rank_display(dict(p)["elo"])
         embed = discord.Embed(title="🕵️ Ranked Matchmaking", color=0x5865F2)
         embed.description = (
             "An **anonymous person** is looking for a match!\n"
             "Who could that be? 👀\n\n"
-            "Click **Accept** if you want to play!\n\n"
-            f"🏅 **Hint:** {rank_name}"
+            "React with ⚔️ to **accept** or ❌ to **cancel**."
         )
         embed.set_footer(text="Anonymous")
-        accept_btn = discord.ui.Button(label="Accept", style=discord.ButtonStyle.green, custom_id="ranked_accept")
-        cancel_btn = discord.ui.Button(label="Cancel", style=discord.ButtonStyle.red, custom_id="ranked_cancel")
-        mm_view = discord.ui.View(timeout=600)
-        mm_view.add_item(accept_btn)
-        mm_view.add_item(cancel_btn)
-        await interaction.response.send_message("✅", ephemeral=True)
-        msg = await interaction.channel.send(embed=embed, view=mm_view)
+        await interaction.response.send_message("✅ Matchmaking created!", ephemeral=True)
+        if RANKED_WEBHOOK_URL:
+            async with aiohttp.ClientSession() as session:
+                webhook = discord.Webhook.from_url(RANKED_WEBHOOK_URL, session=session)
+                msg = await webhook.send(embed=embed, username="Anonymous", wait=True)
+        else:
+            msg = await interaction.channel.send(embed=embed)
+        await msg.add_reaction("⚔️")
+        await msg.add_reaction("❌")
         active_matchmaking[msg.id] = uid
         asyncio.ensure_future(on_timeout_matchmaking(msg.id, interaction.channel))
         return
