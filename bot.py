@@ -1795,7 +1795,7 @@ def has_ranked_role(interaction: discord.Interaction) -> bool:
 @tree.command(name="rankedmatchmaking", description="Open anonymous matchmaking for Ranked")
 async def rankedmatchmaking(interaction: discord.Interaction):
     await interaction.response.defer()
-    if interaction.channel.name != "ranked-matchmaking-bot":
+    if interaction.channel.name not in ["ranked-matchmaking-bot", "test"]:
         await interaction.followup.send("❌ This command can only be used in #ranked-matchmaking-bot!", ephemeral=True)
         return
     if not has_ranked_role(interaction):
@@ -1849,7 +1849,7 @@ async def rankedmatchmaking(interaction: discord.Interaction):
 @app_commands.describe(opponent="Your opponent", goals_you="Your goals", goals_opponent="Opponent goals")
 async def rankedscore(interaction: discord.Interaction, opponent: discord.Member, goals_you: int, goals_opponent: int):
     await interaction.response.defer()
-    if interaction.channel.name != "ranked-score":
+    if interaction.channel.name not in ["ranked-score", "test"]:
         await interaction.followup.send("❌ This command can only be used in #ranked-score!", ephemeral=True)
         return
     if not has_ranked_role(interaction):
@@ -2237,6 +2237,25 @@ async def rankedremovebyid(interaction: discord.Interaction, user_id: str):
     conn.commit()
     conn.close()
     await interaction.followup.send(f"✅ Player **{uid}** removed from CFI Ranked.", ephemeral=True)
+
+@tree.command(name="rankedremove", description="Remove a player from CFI Ranked (admin only)")
+@is_admin()
+@app_commands.describe(player="Select the player to remove from Ranked")
+async def rankedremove(interaction: discord.Interaction, player: discord.Member):
+    await interaction.response.defer(ephemeral=True)
+    uid = str(player.id)
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT * FROM ranked_players WHERE name = %s", (uid,))
+    p = c.fetchone()
+    if not p:
+        conn.close()
+        await interaction.followup.send(f"❌ **{player.display_name}** is not registered for Ranked!", ephemeral=True)
+        return
+    c.execute("DELETE FROM ranked_players WHERE name = %s", (uid,))
+    conn.commit()
+    conn.close()
+    await interaction.followup.send(f"✅ **{player.display_name}** has been removed from CFI Ranked.", ephemeral=True)
 
 @app.route("/")
 def home():
