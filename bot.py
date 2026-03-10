@@ -1953,7 +1953,7 @@ async def on_interaction(interaction: discord.Interaction):
 
         embed = discord.Embed(title="✅ Ranked Score Confirmed!", color=0x00ff88)
         embed.description = (
-            f"**Score:** {score_winner} - {score_loser}\n\n"
+            f"<@{winner_id}> **{score_winner} - {score_loser}** <@{loser_id}>\n\n"
             f"🏆 **{winner_name}** wins!\n"
             f"**Elo:** {new_winner_elo} pts ({winner_rank}) `+{gain}`\n\n"
             f"**{loser_name}**\n"
