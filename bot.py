@@ -1743,7 +1743,11 @@ async def rankedleaderboard(interaction: discord.Interaction):
         name = member.display_name if member else p["name"]
         medal = medals[i] if i < 3 else f"{i+1}."
         rank_name = get_ranked_rank(p["elo"])
-        lines.append(f"{medal} **{name}** — {p['elo']} pts ({rank_name})")
+        w = p.get("wins", 0) or 0
+        l = p.get("losses", 0) or 0
+        total = w + l
+        pct = round((w / total) * 100) if total > 0 else 0
+        lines.append(f"{medal} **{name}** — {p['elo']} pts ({rank_name}) | {w}W {l}L | Winrate {pct}%")
     embed.description = chr(10).join(lines)
     await interaction.followup.send(embed=embed)
 
