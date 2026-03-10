@@ -1,3 +1,4 @@
+import asyncio
 import discord
 import random
 import aiohttp
@@ -1767,12 +1768,29 @@ async def rankedmatchmaking(interaction: discord.Interaction):
 
     accept_btn = discord.ui.Button(label="Accept", style=discord.ButtonStyle.green, custom_id="ranked_accept")
     cancel_btn = discord.ui.Button(label="Cancel", style=discord.ButtonStyle.red, custom_id="ranked_cancel")
-    view = discord.ui.View(timeout=300)
+    view = discord.ui.View(timeout=600)
     view.add_item(accept_btn)
     view.add_item(cancel_btn)
 
     msg = await interaction.followup.send(embed=embed, view=view)
     active_matchmaking[msg.id] = uid
+
+    async def on_timeout_matchmaking(message_id, channel):
+        await asyncio.sleep(600)
+        if message_id in active_matchmaking:
+            del active_matchmaking[message_id]
+            try:
+                msg_obj = await channel.fetch_message(message_id)
+                expired_embed = discord.Embed(
+                    title="❌ Matchmaking Expired",
+                    description="No one accepted the matchmaking request in time.",
+                    color=0xff4444
+                )
+                await msg_obj.edit(embed=expired_embed, view=None)
+            except Exception:
+                pass
+
+    asyncio.ensure_future(on_timeout_matchmaking(msg.id, interaction.channel))
 
 @tree.command(name="rankedscore", description="Submit a ranked match score")
 @app_commands.describe(opponent="Your opponent", goals_you="Your goals", goals_opponent="Opponent goals")
@@ -1803,9 +1821,9 @@ async def rankedscore(interaction: discord.Interaction, opponent: discord.Member
     )
     embed.set_footer(text=f"Submitted by {interaction.user.display_name}")
 
+    view = discord.ui.View(timeout=300)
     confirm_btn = discord.ui.Button(label="✅ Confirm", style=discord.ButtonStyle.green, custom_id="ranked_confirm")
     deny_btn = discord.ui.Button(label="❌ Deny", style=discord.ButtonStyle.red, custom_id="ranked_deny")
-    view = discord.ui.View(timeout=300)
     view.add_item(confirm_btn)
     view.add_item(deny_btn)
 
@@ -1817,6 +1835,23 @@ async def rankedscore(interaction: discord.Interaction, opponent: discord.Member
         "score2": goals_opponent,
         "submitter": uid
     }
+
+    async def on_timeout_ranked(message_id, channel):
+        await asyncio.sleep(300)
+        if message_id in pending_ranked_scores:
+            del pending_ranked_scores[message_id]
+            try:
+                msg_obj = await channel.fetch_message(message_id)
+                expired_embed = discord.Embed(
+                    title="❌ Score Submission Expired",
+                    description="This score submission was not confirmed in time.",
+                    color=0xff4444
+                )
+                await msg_obj.edit(embed=expired_embed, view=None)
+            except Exception:
+                pass
+
+    asyncio.ensure_future(on_timeout_ranked(msg.id, interaction.channel))
 
 
 @bot.event
