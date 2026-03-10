@@ -2193,6 +2193,25 @@ async def on_raw_reaction_remove(payload: discord.RawReactionActionEvent):
     if member and role in member.roles:
         await member.remove_roles(role)
 
+@tree.command(name="rankedremovebyid", description="Remove a player from CFI Ranked by user ID (admin only)")
+@is_admin()
+@app_commands.describe(user_id="The Discord user ID of the ranked player to remove")
+async def rankedremovebyid(interaction: discord.Interaction, user_id: str):
+    await interaction.response.defer(ephemeral=True)
+    uid = user_id.strip().strip("<@!>").strip()
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT * FROM ranked_players WHERE name = %s", (uid,))
+    p = c.fetchone()
+    if not p:
+        conn.close()
+        await interaction.followup.send(f"❌ No ranked player found with ID **{uid}**!", ephemeral=True)
+        return
+    c.execute("DELETE FROM ranked_players WHERE name = %s", (uid,))
+    conn.commit()
+    conn.close()
+    await interaction.followup.send(f"✅ Player **{uid}** removed from CFI Ranked.", ephemeral=True)
+
 @app.route("/")
 def home():
     return "Bot is running!"
