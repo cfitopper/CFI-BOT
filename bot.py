@@ -1628,11 +1628,27 @@ RANKED_RANKS = [
 
 RANKED_K = 32
 
+RANK_EMOJIS = {
+    "Bronze":    ":bronze:",
+    "Silver":    ":silver:",
+    "Gold":      ":gold:",
+    "Elite":     ":elite:",
+    "Emerald":   ":emerald:",
+    "Emperor":   ":emperor:",
+    "Supernova": ":supernova:",
+    "Eternal":   ":eternal:",
+}
+
 def get_ranked_rank(elo):
     for r in reversed(RANKED_RANKS):
         if elo >= r["min"]:
             return r["name"]
     return "Bronze"
+
+def get_rank_display(elo):
+    name = get_ranked_rank(elo)
+    emoji = RANK_EMOJIS.get(name, "")
+    return f"{emoji} {name}"
 
 def calc_elo(winner_elo, loser_elo):
     expected_w = 1 / (1 + 10 ** ((loser_elo - winner_elo) / 400))
@@ -1730,7 +1746,7 @@ async def rankedprofile(interaction: discord.Interaction, player: discord.Member
     global_pos = next((i + 1 for i, r in enumerate(all_ranked) if r["name"] == uid), 1)
     conn.close()
 
-    rank_name = get_ranked_rank(p["elo"])
+    rank_name = get_rank_display(p["elo"])
     d = p.get("draws", 0) or 0
     total = p["wins"] + p["losses"] + d
     winrate = round((p["wins"] / total * 100)) if total > 0 else 0
@@ -1769,7 +1785,7 @@ async def rankedleaderboard(interaction: discord.Interaction):
         member = interaction.guild.get_member(int(p["name"]))
         name = member.display_name if member else p["name"]
         medal = medals[i] if i < 3 else f"{i+1}."
-        rank_name = get_ranked_rank(p["elo"])
+        rank_name = get_rank_display(p["elo"])
         w = p.get("wins", 0) or 0
         l = p.get("losses", 0) or 0
         total = w + l
@@ -1811,7 +1827,7 @@ async def rankedmatchmaking(interaction: discord.Interaction):
         await interaction.followup.send("❌ You are not registered for Ranked! Use /rankedregister first.", ephemeral=True)
         return
 
-    rank_name = get_ranked_rank(dict(p)["elo"])
+    rank_name = get_rank_display(dict(p)["elo"])
 
     embed = discord.Embed(title="🕵️ Ranked Matchmaking", color=0x5865F2)
     embed.description = (
@@ -2021,8 +2037,8 @@ async def on_interaction(interaction: discord.Interaction):
             p2_member = interaction.guild.get_member(int(p2_id))
             p1_name = p1_member.display_name if p1_member else p1_id
             p2_name = p2_member.display_name if p2_member else p2_id
-            p1_rank = get_ranked_rank(new_p1_elo)
-            p2_rank = get_ranked_rank(new_p2_elo)
+            p1_rank = get_rank_display(new_p1_elo)
+            p2_rank = get_rank_display(new_p2_elo)
 
             banner_file = None
             try:
@@ -2054,8 +2070,8 @@ async def on_interaction(interaction: discord.Interaction):
             loser_member  = interaction.guild.get_member(int(loser_id))
             winner_name   = winner_member.display_name if winner_member else winner_id
             loser_name    = loser_member.display_name  if loser_member  else loser_id
-            winner_rank = get_ranked_rank(new_winner_elo)
-            loser_rank  = get_ranked_rank(new_loser_elo)
+            winner_rank = get_rank_display(new_winner_elo)
+            loser_rank  = get_rank_display(new_loser_elo)
 
             banner_file = None
             try:
@@ -2128,7 +2144,7 @@ async def rankedsetstats(interaction: discord.Interaction, player: discord.Membe
     if elo is not None:
         updates.append("elo = %s")
         values.append(max(0, elo))
-        changed.append(f"Elo: {max(0, elo)} ({get_ranked_rank(max(0, elo))})")
+        changed.append(f"Elo: {max(0, elo)} ({get_rank_display(max(0, elo))})")
     if wins is not None:
         updates.append("wins = %s")
         values.append(wins)
