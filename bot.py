@@ -168,7 +168,7 @@ def generate_ranked_banner(
     if not os.path.exists(font_path):
         font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
     try:
-        font_name  = ImageFont.truetype(font_path, 20)
+        font_name  = ImageFont.truetype(font_path, 28)
         font_score = ImageFont.truetype(font_path, 180)
     except Exception as e:
         print(f"Font load error: {e}")
@@ -185,7 +185,7 @@ def generate_ranked_banner(
             av = Image.new("RGBA", (size, size), (80, 80, 80, 255))
         return av.resize((size, size), Image.LANCZOS)
 
-    av_size  = 180
+    av_size  = 280
     pad      = 12
     av_y     = (H - av_size) // 2
     left_x   = pad
@@ -202,11 +202,11 @@ def generate_ranked_banner(
     bg.paste(winner_av, (left_x,  av_y), winner_av)
     bg.paste(loser_av,  (right_x, av_y), loser_av)
 
-    name_y = av_y + av_size - 28
+    name_y = av_y + av_size - 36
     draw.rectangle([left_x,  name_y, left_x  + av_size, av_y + av_size], fill=(0, 0, 0, 180))
     draw.rectangle([right_x, name_y, right_x + av_size, av_y + av_size], fill=(0, 0, 0, 180))
-    draw_centered(winner_name[:14], left_cx,  name_y + 6, font_name, (255, 255, 255, 255))
-    draw_centered(loser_name[:14],  right_cx, name_y + 6, font_name, (255, 255, 255, 255))
+    draw_centered(winner_name[:18], left_cx,  name_y + 8, font_name, (255, 255, 255, 255))
+    draw_centered(loser_name[:18],  right_cx, name_y + 8, font_name, (255, 255, 255, 255))
 
     score_text = f"{score_winner} - {score_loser}"
     bb = draw.textbbox((0, 0), score_text, font=font_score)
