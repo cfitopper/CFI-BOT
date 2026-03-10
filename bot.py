@@ -2180,6 +2180,23 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
     if member and role not in member.roles:
         await member.add_roles(role)
 
+    # Auto register for ranked
+    uid = str(payload.user_id)
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT name FROM ranked_players WHERE name = %s", (uid,))
+    existing = c.fetchone()
+    if not existing:
+        c.execute("INSERT INTO ranked_players (name, elo, wins, losses, draws) VALUES (%s, 0, 0, 0, 0)", (uid,))
+        conn.commit()
+        try:
+            channel = guild.get_channel(payload.channel_id)
+            if channel:
+                await channel.send(f"✅ <@{uid}> you are now registered for CFI Ranked! Use `/rankedmatchmaking` to find a match.", delete_after=10)
+        except Exception:
+            pass
+    conn.close()
+
 @bot.event
 async def on_raw_reaction_remove(payload: discord.RawReactionActionEvent):
     if payload.message_id not in ranked_reaction_messages:
