@@ -164,13 +164,14 @@ def generate_ranked_banner(
     bg = bg_orig.resize((W, H), Image.LANCZOS)
     draw = ImageDraw.Draw(bg)
 
-    font_path = os.path.join(os.path.dirname(__file__), "Roboto-Bold.ttf")
+    font_path = os.path.join(os.path.dirname(__file__), "DejaVuSans-Bold.ttf")
     if not os.path.exists(font_path):
         font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
     try:
         font_name  = ImageFont.truetype(font_path, 20)
         font_score = ImageFont.truetype(font_path, 180)
-    except Exception:
+    except Exception as e:
+        print(f"Font load error: {e}")
         font_score = font_name = ImageFont.load_default()
 
     def draw_centered(text, cx, y, font, color):
