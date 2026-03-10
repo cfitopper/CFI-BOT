@@ -1969,12 +1969,7 @@ async def on_interaction(interaction: discord.Interaction):
         mm_view.add_item(accept_btn)
         mm_view.add_item(cancel_btn)
         await interaction.response.send_message("✅", ephemeral=True)
-        if RANKED_WEBHOOK_URL:
-            async with aiohttp.ClientSession() as session:
-                webhook = discord.Webhook.from_url(RANKED_WEBHOOK_URL, session=session)
-                msg = await webhook.send(embed=embed, view=mm_view, username="Anonymous", wait=True)
-        else:
-            msg = await interaction.channel.send(embed=embed, view=mm_view)
+        msg = await interaction.channel.send(embed=embed, view=mm_view)
         active_matchmaking[msg.id] = uid
         asyncio.ensure_future(on_timeout_matchmaking(msg.id, interaction.channel))
         return
