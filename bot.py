@@ -1834,19 +1834,21 @@ async def rankedmatchmaking(interaction: discord.Interaction):
     embed.description = (
         "An **anonymous person** is looking for a match!\n"
         "Who could that be? 👀\n\n"
-        "If you are interested, click **Accept**.\n\n"
+        "React with ⚔️ to **accept** or ❌ to **cancel**.\n\n"
         f"🏅 **Hint:** {rank_name}"
     )
     embed.set_footer(text="Anonymous")
 
-    accept_btn = discord.ui.Button(label="Accept", style=discord.ButtonStyle.green, custom_id="ranked_accept")
-    cancel_btn = discord.ui.Button(label="Cancel", style=discord.ButtonStyle.red, custom_id="ranked_cancel")
-    view = discord.ui.View(timeout=600)
-    view.add_item(accept_btn)
-    view.add_item(cancel_btn)
-
     await interaction.followup.send("✅", ephemeral=True)
-    msg = await interaction.channel.send(embed=embed, view=view)
+    if RANKED_WEBHOOK_URL:
+        async with aiohttp.ClientSession() as session:
+            webhook = discord.Webhook.from_url(RANKED_WEBHOOK_URL, session=session)
+            msg = await webhook.send(embed=embed, username="Anonymous", wait=True)
+    else:
+        msg = await interaction.channel.send(embed=embed)
+
+    await msg.add_reaction("⚔️")
+    await msg.add_reaction("❌")
     active_matchmaking[msg.id] = uid
 
     async def on_timeout_matchmaking(message_id, channel):
@@ -1938,51 +1940,8 @@ async def on_interaction(interaction: discord.Interaction):
     uid = str(interaction.user.id)
     msg_id = interaction.message.id
 
-    # ---- MATCHMAKING ACCEPT ----
-    if custom_id == "ranked_accept":
-        if msg_id not in active_matchmaking:
-            await interaction.response.send_message("❌ This matchmaking session has expired.", ephemeral=True)
-            return
-        seeker_id = active_matchmaking[msg_id]
-        if str(uid) == str(seeker_id):
-            await interaction.response.send_message("❌ You can't accept your own matchmaking!", ephemeral=True)
-            return
-        conn = get_db()
-        c = conn.cursor()
-        c.execute("SELECT * FROM ranked_players WHERE name = %s", (uid,))
-        accepter = c.fetchone()
-        conn.close()
-        if not accepter:
-            await interaction.response.send_message("❌ You are not registered for Ranked!", ephemeral=True)
-            return
-
-        seeker = interaction.guild.get_member(int(seeker_id))
-        accepter_member = interaction.guild.get_member(int(uid))
-        host = random.choice([seeker, accepter_member])
-
-        del active_matchmaking[msg_id]
-        embed = discord.Embed(title="✅ Match Found!", color=0x00ff88)
-        embed.description = (
-            f"**{seeker.display_name if seeker else seeker_id}** vs **{accepter_member.display_name if accepter_member else uid}**\n\n"
-            f"🏠 **Host:** {host.display_name}\n\n"
-            f"Use `/rankedscore` when the match is done!"
-        )
-        await interaction.response.edit_message(embed=embed, view=None)
-
-    # ---- MATCHMAKING CANCEL ----
-    elif custom_id == "ranked_cancel":
-        if msg_id not in active_matchmaking:
-            await interaction.response.send_message("❌ This session has expired.", ephemeral=True)
-            return
-        if uid != active_matchmaking[msg_id]:
-            await interaction.response.send_message("❌ Only the person who opened matchmaking can cancel it.", ephemeral=True)
-            return
-        del active_matchmaking[msg_id]
-        await interaction.message.delete()
-        await interaction.response.send_message("❌ Matchmaking cancelled.", ephemeral=True)
-
     # ---- SCORE CONFIRM ----
-    elif custom_id == "ranked_confirm":
+    if custom_id == "ranked_confirm":
         if msg_id not in pending_ranked_scores:
             await interaction.response.send_message("❌ This score submission has expired.", ephemeral=True)
             return
@@ -2188,6 +2147,67 @@ async def rankedreactionrole(interaction: discord.Interaction):
 async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
     if payload.member and payload.member.bot:
         return
+
+    # ---- MATCHMAKING REACTIONS ----
+    if payload.message_id in active_matchmaking:
+        emoji = str(payload.emoji)
+        guild = bot.get_guild(payload.guild_id)
+        if not guild:
+            return
+        uid = str(payload.user_id)
+        seeker_id = active_matchmaking[payload.message_id]
+        channel = guild.get_channel(payload.channel_id)
+
+        if emoji == "❌":
+            if uid == seeker_id:
+                del active_matchmaking[payload.message_id]
+                try:
+                    msg_obj = await channel.fetch_message(payload.message_id)
+                    await msg_obj.delete()
+                except Exception:
+                    pass
+                if channel:
+                    await channel.send(f"❌ Matchmaking cancelled.", delete_after=5)
+            return
+
+        if emoji == "⚔️":
+            if uid == seeker_id:
+                try:
+                    msg_obj = await channel.fetch_message(payload.message_id)
+                    await msg_obj.remove_reaction("⚔️", payload.member)
+                except Exception:
+                    pass
+                return
+
+            conn = get_db()
+            c = conn.cursor()
+            c.execute("SELECT * FROM ranked_players WHERE name = %s", (uid,))
+            accepter = c.fetchone()
+            conn.close()
+            if not accepter:
+                if channel:
+                    await channel.send(f"<@{uid}> ❌ You are not registered for Ranked!", delete_after=5)
+                return
+
+            del active_matchmaking[payload.message_id]
+            seeker = guild.get_member(int(seeker_id))
+            accepter_member = guild.get_member(int(uid))
+            host = random.choice([seeker, accepter_member])
+
+            match_embed = discord.Embed(title="✅ Match Found!", color=0x00ff88)
+            match_embed.description = (
+                f"**{seeker.display_name if seeker else seeker_id}** vs **{accepter_member.display_name if accepter_member else uid}**\n\n"
+                f"🏠 **Host:** {host.display_name if host else 'Unknown'}\n\n"
+                f"Use `/rankedscore` when the match is done!"
+            )
+            try:
+                msg_obj = await channel.fetch_message(payload.message_id)
+                await msg_obj.edit(embed=match_embed)
+                await msg_obj.clear_reactions()
+            except Exception:
+                pass
+            return
+
     if payload.message_id not in ranked_reaction_messages:
         return
     if str(payload.emoji) != "⚔️":
