@@ -1972,6 +1972,15 @@ async def on_interaction(interaction: discord.Interaction):
             f"Use `/rankedscore` when the match is done!"
         )
         await interaction.response.edit_message(embed=match_embed, view=None)
+
+        async def delete_match_message():
+            await asyncio.sleep(600)
+            try:
+                msg_obj = await interaction.channel.fetch_message(msg_id)
+                await msg_obj.delete()
+            except Exception:
+                pass
+        asyncio.ensure_future(delete_match_message())
         return
 
     # ---- MATCHMAKING CANCEL ----
@@ -2326,6 +2335,14 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
                 msg_obj = await channel.fetch_message(payload.message_id)
                 await msg_obj.edit(embed=match_embed)
                 await msg_obj.clear_reactions()
+
+                async def delete_match_msg(m):
+                    await asyncio.sleep(600)
+                    try:
+                        await m.delete()
+                    except Exception:
+                        pass
+                asyncio.ensure_future(delete_match_msg(msg_obj))
             except Exception:
                 pass
             return
