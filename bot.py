@@ -1649,7 +1649,7 @@ def get_ranked_rank(elo):
 def get_rank_display(elo):
     name = get_ranked_rank(elo)
     emoji = RANK_EMOJIS.get(name, "")
-    return f"{emoji} {name}"
+    return f"{name} {emoji}"
 
 def calc_elo(winner_elo, loser_elo):
     expected_w = 1 / (1 + 10 ** ((loser_elo - winner_elo) / 400))
