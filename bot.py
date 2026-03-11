@@ -1722,6 +1722,7 @@ def setup_ranked_db(conn):
     conn.commit()
 
 pending_ranked_scores = {}
+pending_ranked_undos = {}  # match_id -> {p1, p2, old_p1_elo, old_p2_elo, old_p1_wins, old_p1_losses, old_p1_draws, old_p2_wins, old_p2_losses, old_p2_draws, is_draw}
 active_matchmaking = {}
 
 @tree.command(name="rankedregister", description="Register yourself for CFI Ranked")
@@ -1870,8 +1871,10 @@ async def rankedscore(interaction: discord.Interaction, opponent: discord.Member
     view = discord.ui.View(timeout=300)
     confirm_btn = discord.ui.Button(label="✅ Confirm", style=discord.ButtonStyle.green, custom_id="ranked_confirm")
     deny_btn = discord.ui.Button(label="❌ Deny", style=discord.ButtonStyle.red, custom_id="ranked_deny")
+    reject_btn = discord.ui.Button(label="🚫 Reject (Mod)", style=discord.ButtonStyle.grey, custom_id="ranked_reject")
     view.add_item(confirm_btn)
     view.add_item(deny_btn)
+    view.add_item(reject_btn)
 
     msg = await interaction.followup.send(embed=embed, view=view, allowed_mentions=discord.AllowedMentions(users=True))
     pending_ranked_scores[msg.id] = {
@@ -2108,6 +2111,37 @@ async def on_interaction(interaction: discord.Interaction):
         else:
             await interaction.response.edit_message(embed=embed, view=None)
 
+        # Send undo button to #ranked-score-mods
+        try:
+            mods_channel = discord.utils.get(interaction.guild.text_channels, name="ranked-score-mods")
+            if mods_channel:
+                if is_draw:
+                    undo_data = {
+                        "p1": p1_id, "p2": p2_id,
+                        "old_p1_elo": p1_data["elo"], "old_p2_elo": p2_data["elo"],
+                        "old_p1_wins": p1_data["wins"], "old_p1_losses": p1_data["losses"], "old_p1_draws": p1_data.get("draws", 0),
+                        "old_p2_wins": p2_data["wins"], "old_p2_losses": p2_data["losses"], "old_p2_draws": p2_data.get("draws", 0),
+                        "result": "draw"
+                    }
+                    undo_desc = f"**Draw:** <@{p1_id}> {s1} - {s2} <@{p2_id}>"
+                else:
+                    undo_data = {
+                        "p1": winner_id, "p2": loser_id,
+                        "old_p1_elo": winner_data["elo"], "old_p2_elo": loser_data["elo"],
+                        "old_p1_wins": winner_data["wins"], "old_p1_losses": winner_data["losses"], "old_p1_draws": winner_data.get("draws", 0),
+                        "old_p2_wins": loser_data["wins"], "old_p2_losses": loser_data["losses"], "old_p2_draws": loser_data.get("draws", 0),
+                        "result": "win"
+                    }
+                    undo_desc = f"**Result:** <@{winner_id}> {max(s1,s2)} - {min(s1,s2)} <@{loser_id}>"
+                undo_embed = discord.Embed(title="📋 Ranked Score Logged", color=0x5865F2)
+                undo_embed.description = undo_desc + f"\nSubmitted by <@{data['submitter']}>"
+                undo_view = discord.ui.View(timeout=None)
+                undo_btn = discord.ui.Button(label="🔄 Undo Score", style=discord.ButtonStyle.red, custom_id=f"ranked_undo_{p1_id}_{p2_id}_{undo_data['old_p1_elo']}_{undo_data['old_p2_elo']}_{undo_data['old_p1_wins']}_{undo_data['old_p1_losses']}_{undo_data['old_p1_draws']}_{undo_data['old_p2_wins']}_{undo_data['old_p2_losses']}_{undo_data['old_p2_draws']}_{undo_data['result']}")
+                undo_view.add_item(undo_btn)
+                await mods_channel.send(embed=undo_embed, view=undo_view)
+        except Exception as e:
+            print(f"Error sending to ranked-score-mods: {e}")
+
     # ---- SCORE DENY ----
     elif custom_id == "ranked_deny":
         if msg_id not in pending_ranked_scores:
@@ -2119,6 +2153,40 @@ async def on_interaction(interaction: discord.Interaction):
             return
         del pending_ranked_scores[msg_id]
         await interaction.response.edit_message(content="❌ Score denied by opponent.", embed=None, view=None)
+
+    elif custom_id.startswith("ranked_undo_"):
+        allowed = ADMIN_ROLES + ["League Moderator (crew)", "Moderator (crew)"]
+        if not any(r.name in allowed for r in interaction.user.roles):
+            await interaction.response.send_message("❌ Only admins and mods can undo scores.", ephemeral=True)
+            return
+        try:
+            parts = custom_id.split("_")[2:]
+            p1_id, p2_id = parts[0], parts[1]
+            old_p1_elo, old_p2_elo = int(parts[2]), int(parts[3])
+            old_p1_wins, old_p1_losses, old_p1_draws = int(parts[4]), int(parts[5]), int(parts[6])
+            old_p2_wins, old_p2_losses, old_p2_draws = int(parts[7]), int(parts[8]), int(parts[9])
+            conn = get_db()
+            c = conn.cursor()
+            c.execute("UPDATE ranked_players SET elo=%s, wins=%s, losses=%s, draws=%s WHERE name=%s",
+                      (old_p1_elo, old_p1_wins, old_p1_losses, old_p1_draws, p1_id))
+            c.execute("UPDATE ranked_players SET elo=%s, wins=%s, losses=%s, draws=%s WHERE name=%s",
+                      (old_p2_elo, old_p2_wins, old_p2_losses, old_p2_draws, p2_id))
+            conn.commit()
+            conn.close()
+            await interaction.response.edit_message(content=f"✅ Score undone by **{interaction.user.display_name}**.", embed=None, view=None)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Error undoing score: {e}", ephemeral=True)
+
+    elif custom_id == "ranked_reject":
+        if msg_id not in pending_ranked_scores:
+            await interaction.response.send_message("❌ This score submission has expired.", ephemeral=True)
+            return
+        allowed = ADMIN_ROLES + ["League Moderator (crew)", "Moderator (crew)"]
+        if not any(r.name in allowed for r in interaction.user.roles):
+            await interaction.response.send_message("❌ Only admins and mods can reject scores.", ephemeral=True)
+            return
+        del pending_ranked_scores[msg_id]
+        await interaction.response.edit_message(content=f"🚫 Score rejected by **{interaction.user.display_name}**.", embed=None, view=None)
 
 
 @tree.command(name="rankedsetstats", description="Manually update a player's ranked stats (admin only)")
