@@ -1928,23 +1928,43 @@ async def on_interaction(interaction: discord.Interaction):
         if not p:
             await interaction.response.send_message("❌ You are not registered for Ranked!", ephemeral=True)
             return
+        legs_view = discord.ui.View(timeout=60)
+        legs_view.add_item(discord.ui.Button(label="1 Leg", style=discord.ButtonStyle.primary, custom_id="ranked_mm_legs_1"))
+        legs_view.add_item(discord.ui.Button(label="2 Legs", style=discord.ButtonStyle.primary, custom_id="ranked_mm_legs_2"))
+        await interaction.response.send_message("How many legs do you want to play?", view=legs_view, ephemeral=True)
+        return
+
+    # ---- LEG SELECTION ----
+    if custom_id in ("ranked_mm_legs_1", "ranked_mm_legs_2"):
+        legs = 1 if custom_id == "ranked_mm_legs_1" else 2
+        uid = str(interaction.user.id)
+        if not has_ranked_role(interaction):
+            await interaction.response.send_message("❌ You need the **CFI - Ranked** role to use this. React with ⚔️ to get it!", ephemeral=True)
+            return
+        conn = get_db()
+        c = conn.cursor()
+        c.execute("SELECT * FROM ranked_players WHERE name = %s", (uid,))
+        p = c.fetchone()
+        conn.close()
+        if not p:
+            await interaction.response.send_message("❌ You are not registered for Ranked!", ephemeral=True)
+            return
+        legs_label = f"{legs} leg{'s' if legs > 1 else ''}"
         embed = discord.Embed(title="🕵️ Ranked Matchmaking", color=0x5865F2)
         embed.description = (
-            "An **anonymous person** is looking for a match!\n"
+            f"An **anonymous person** is looking for a match! (**{legs_label}**)\n"
             "Who could that be? 👀\n\n"
             "Click **Accept** to play or **Cancel** to cancel."
         )
         embed.set_footer(text="Anonymous")
-        accept_btn = discord.ui.Button(label="✅ Accept", style=discord.ButtonStyle.green, custom_id="ranked_accept")
-        cancel_btn = discord.ui.Button(label="❌ Cancel", style=discord.ButtonStyle.red, custom_id="ranked_cancel")
         mm_view = discord.ui.View(timeout=600)
-        mm_view.add_item(accept_btn)
-        mm_view.add_item(cancel_btn)
-        await interaction.response.send_message("✅ Matchmaking created!", ephemeral=True)
+        mm_view.add_item(discord.ui.Button(label="✅ Accept", style=discord.ButtonStyle.green, custom_id="ranked_accept"))
+        mm_view.add_item(discord.ui.Button(label="❌ Cancel", style=discord.ButtonStyle.red, custom_id="ranked_cancel"))
+        await interaction.response.edit_message(content="✅ Matchmaking created!", view=None)
         ranked_role = discord.utils.get(interaction.guild.roles, name="CFI - Ranked")
         ping_content = ranked_role.mention if ranked_role else ""
         msg = await interaction.channel.send(content=ping_content, embed=embed, view=mm_view, allowed_mentions=discord.AllowedMentions(roles=True))
-        active_matchmaking[msg.id] = uid
+        active_matchmaking[msg.id] = {"seeker": uid, "legs": legs}
         asyncio.ensure_future(on_timeout_matchmaking(msg.id, interaction.channel))
         return
 
@@ -1953,7 +1973,9 @@ async def on_interaction(interaction: discord.Interaction):
         if msg_id not in active_matchmaking:
             await interaction.response.send_message("❌ This matchmaking session has expired.", ephemeral=True)
             return
-        seeker_id = active_matchmaking[msg_id]
+        mm_data = active_matchmaking[msg_id]
+        seeker_id = mm_data["seeker"]
+        legs = mm_data["legs"]
         if uid == seeker_id:
             await interaction.response.send_message("❌ You can't accept your own matchmaking!", ephemeral=True)
             return
@@ -1969,10 +1991,12 @@ async def on_interaction(interaction: discord.Interaction):
         accepter_member = interaction.guild.get_member(int(uid))
         host = random.choice([seeker, accepter_member])
         del active_matchmaking[msg_id]
+        legs_label = f"{legs} leg{'s' if legs > 1 else ''}"
         match_embed = discord.Embed(title="✅ Match Found!", color=0x00ff88)
         match_embed.description = (
             f"**{seeker.display_name if seeker else seeker_id}** vs **{accepter_member.display_name if accepter_member else uid}**\n\n"
-            f"🏠 **Host:** {host.display_name if host else 'Unknown'}\n\n"
+            f"🏠 **Host:** {host.display_name if host else 'Unknown'}\n"
+            f"🎯 **Format:** {legs_label}\n\n"
             f"Use `/rankedscore` when the match is done!"
         )
         await interaction.response.edit_message(embed=match_embed, view=None)
@@ -1996,7 +2020,7 @@ async def on_interaction(interaction: discord.Interaction):
         if msg_id not in active_matchmaking:
             await interaction.response.send_message("❌ This session has expired.", ephemeral=True)
             return
-        if uid != active_matchmaking[msg_id]:
+        if uid != active_matchmaking[msg_id]["seeker"]:
             await interaction.response.send_message("❌ Only the person who opened matchmaking can cancel it.", ephemeral=True)
             return
         del active_matchmaking[msg_id]
@@ -2294,7 +2318,9 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
         if not guild:
             return
         uid = str(payload.user_id)
-        seeker_id = active_matchmaking[payload.message_id]
+        mm_data = active_matchmaking[payload.message_id]
+        seeker_id = mm_data["seeker"]
+        legs = mm_data["legs"]
         channel = guild.get_channel(payload.channel_id)
 
         if emoji == "❌":
@@ -2332,11 +2358,13 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
             seeker = guild.get_member(int(seeker_id))
             accepter_member = guild.get_member(int(uid))
             host = random.choice([seeker, accepter_member])
+            legs_label = f"{legs} leg{'s' if legs > 1 else ''}"
 
             match_embed = discord.Embed(title="✅ Match Found!", color=0x00ff88)
             match_embed.description = (
                 f"**{seeker.display_name if seeker else seeker_id}** vs **{accepter_member.display_name if accepter_member else uid}**\n\n"
-                f"🏠 **Host:** {host.display_name if host else 'Unknown'}\n\n"
+                f"🏠 **Host:** {host.display_name if host else 'Unknown'}\n"
+                f"🎯 **Format:** {legs_label}\n\n"
                 f"Use `/rankedscore` when the match is done!"
             )
             try:
