@@ -1823,7 +1823,7 @@ async def on_timeout_matchmaking(message_id, channel):
 @app_commands.describe(opponent="Your opponent", goals_you="Your goals", goals_opponent="Opponent goals")
 async def rankedscore(interaction: discord.Interaction, opponent: discord.Member, goals_you: int, goals_opponent: int):
     await interaction.response.defer()
-    if interaction.channel.name not in ["ranked-score", "test"]:
+    if interaction.channel.name not in ["ranked-score", "ranked-score-🏆", "ranked-score-🤖", "test"]:
         await interaction.followup.send("❌ This command can only be used in #ranked-score!", ephemeral=True)
         return
     if not has_ranked_role(interaction):
