@@ -1999,7 +1999,7 @@ async def on_interaction(interaction: discord.Interaction):
             f"🎯 **Format:** {legs_label}\n\n"
             f"Use `/rankedscore` when the match is done!"
         )
-        await interaction.response.edit_message(embed=match_embed, view=None)
+        await interaction.response.edit_message(content="", embed=match_embed, view=None)
         await interaction.channel.send(
             f"<@{seeker_id}> <@{uid}> ⚔️ Match found!",
             allowed_mentions=discord.AllowedMentions(users=True)
@@ -2369,7 +2369,7 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
             )
             try:
                 msg_obj = await channel.fetch_message(payload.message_id)
-                await msg_obj.edit(embed=match_embed)
+                await msg_obj.edit(content="", embed=match_embed)
                 await msg_obj.clear_reactions()
                 await channel.send(
                     f"<@{seeker_id}> <@{uid}> ⚔️ Match found!",
