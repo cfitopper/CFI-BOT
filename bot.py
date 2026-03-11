@@ -133,6 +133,13 @@ def setup_db():
         conn.commit()
     except Exception:
         conn.rollback()
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS bot_config (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+    """)
+    conn.commit()
     conn.close()
 
 # ─────────────────────────────────────────
@@ -1512,6 +1519,12 @@ async def on_ready():
         setup_db()
         conn_r = get_db()
         setup_ranked_db(conn_r)
+        c_r = conn_r.cursor()
+        c_r.execute("SELECT value FROM bot_config WHERE key = 'ranked_reaction_msg_id'")
+        row = c_r.fetchone()
+        if row:
+            ranked_reaction_messages.add(int(row["value"]))
+            print(f"✅ Loaded reaction role message ID: {row['value']}")
         conn_r.close()
         print("📊 Database ready")
         synced = await tree.sync()
@@ -2172,6 +2185,11 @@ async def rankedreactionrole(interaction: discord.Interaction):
     msg = await interaction.channel.send(embed=embed)
     await msg.add_reaction("⚔️")
     ranked_reaction_messages.add(msg.id)
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("INSERT INTO bot_config (key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", ("ranked_reaction_msg_id", str(msg.id)))
+    conn.commit()
+    conn.close()
     await interaction.followup.send(f"✅ Reaction role message sent!", ephemeral=True)
 
 @bot.event
