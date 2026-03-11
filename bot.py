@@ -2,7 +2,7 @@ import asyncio
 import discord
 import random
 import aiohttp
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord import app_commands
 import os
 from datetime import datetime
@@ -2464,4 +2464,79 @@ def run_web():
     app.run(host="0.0.0.0", port=8080)
 
 Thread(target=run_web).start()
+
+
+def build_leaderboard_embed(guild):
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT * FROM ranked_players ORDER BY elo DESC, name ASC LIMIT 10")
+    players = [dict(p) for p in c.fetchall()]
+    conn.close()
+    medals = ["🥇", "🥈", "🥉"]
+    embed = discord.Embed(title="🏆 CFI Ranked Leaderboard", color=0xFFD700)
+    if not players:
+        embed.description = "No ranked players yet!"
+        return embed
+    lines = []
+    for i, p in enumerate(players):
+        member = guild.get_member(int(p["name"]))
+        name = member.display_name if member else p["name"]
+        medal = medals[i] if i < 3 else f"{i+1}."
+        rank_name = get_rank_display(p["elo"])
+        w = p.get("wins", 0) or 0
+        l = p.get("losses", 0) or 0
+        d = p.get("draws", 0) or 0
+        total = w + l + d
+        pct = round((w / total) * 100) if total > 0 else 0
+        lines.append(f"{medal} **{name}**\n{rank_name} | {p['elo']} pts | {w}W {d}D {l}L | Winrate {pct}%")
+    embed.description = chr(10).join(lines)
+    return embed
+
+
+@tasks.loop(hours=1)
+async def update_leaderboard_task():
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT value FROM bot_config WHERE key = 'leaderboard_channel_id'")
+    row_ch = c.fetchone()
+    c.execute("SELECT value FROM bot_config WHERE key = 'leaderboard_message_id'")
+    row_msg = c.fetchone()
+    conn.close()
+    if not row_ch or not row_msg:
+        return
+    for guild in bot.guilds:
+        channel = guild.get_channel(int(row_ch["value"]))
+        if not channel:
+            continue
+        try:
+            msg = await channel.fetch_message(int(row_msg["value"]))
+            await msg.edit(embed=build_leaderboard_embed(guild))
+        except Exception as e:
+            print(f"❌ Leaderboard update failed: {e}")
+
+
+@update_leaderboard_task.before_loop
+async def before_leaderboard_task():
+    await bot.wait_until_ready()
+
+update_leaderboard_task.start()
+
+
+@tree.command(name="rankedleaderboardsetup", description="Post een live leaderboard dat elk uur wordt geupdate (admin only)")
+async def rankedleaderboardsetup(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    if not any(r.name in ADMIN_ROLES for r in interaction.user.roles):
+        await interaction.followup.send("❌ No permission.", ephemeral=True)
+        return
+    embed = build_leaderboard_embed(interaction.guild)
+    msg = await interaction.channel.send(embed=embed)
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("INSERT OR REPLACE INTO bot_config (key, value) VALUES ('leaderboard_channel_id', ?)", (str(interaction.channel.id),))
+    c.execute("INSERT OR REPLACE INTO bot_config (key, value) VALUES ('leaderboard_message_id', ?)", (str(msg.id),))
+    conn.commit()
+    conn.close()
+    await interaction.followup.send("✅ Leaderboard gepost en wordt elk uur geupdate!", ephemeral=True)
+
+
 bot.run(BOT_TOKEN)
