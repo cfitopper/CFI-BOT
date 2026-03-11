@@ -1530,6 +1530,8 @@ async def on_ready():
         synced = await tree.sync()
         print(f"✅ Bot is online as {bot.user}!")
         print(f"🎮 Slash commands synced: {len(synced)} commands")
+        if not update_leaderboard_task.is_running():
+            update_leaderboard_task.start()
     except Exception as e:
         print(f"❌ on_ready error: {e}")
 
@@ -2513,13 +2515,6 @@ async def update_leaderboard_task():
             await msg.edit(embed=build_leaderboard_embed(guild))
         except Exception as e:
             print(f"❌ Leaderboard update failed: {e}")
-
-
-@update_leaderboard_task.before_loop
-async def before_leaderboard_task():
-    await bot.wait_until_ready()
-
-update_leaderboard_task.start()
 
 
 @tree.command(name="rankedleaderboardsetup", description="Post een live leaderboard dat elk uur wordt geupdate (admin only)")
