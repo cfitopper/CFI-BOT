@@ -1678,15 +1678,15 @@ def calc_elo(winner_elo, loser_elo):
 
 def calc_elo_draw(p1_elo, p2_elo):
     # Both always gain elo on a draw, higher elo gains less
-    base = 12
+    base = 6
     diff = abs(p1_elo - p2_elo)
-    reduction = min(6, round(diff / 150))
+    reduction = min(3, round(diff / 150))
     if p1_elo > p2_elo:
-        change_1 = max(6, base - reduction)
+        change_1 = max(3, base - reduction)
         change_2 = base
     elif p2_elo > p1_elo:
         change_1 = base
-        change_2 = max(6, base - reduction)
+        change_2 = max(3, base - reduction)
     else:
         change_1 = change_2 = base
     new_p1 = p1_elo + change_1
