@@ -1755,9 +1755,9 @@ async def rankedprofile(interaction: discord.Interaction, player: discord.Member
     embed = discord.Embed(title=f"⚽ {target.display_name}", color=0xffaa00)
     embed.set_thumbnail(url=target.display_avatar.url)
     embed.description = (
+        f"{rank_name}\n\n"
         f"**Elo:** {p['elo']} pts\n"
         f"**Global Position:** #{global_pos}\n"
-        f"**Rank:** {rank_name}\n"
         f"**Wins:** {p['wins']}\n"
         f"**Draws:** {d}\n"
         f"**Losses:** {p['losses']}\n"
@@ -1794,7 +1794,7 @@ async def rankedleaderboard(interaction: discord.Interaction):
         d = p.get("draws", 0) or 0
         total = w + l + d
         pct = round((w / total) * 100) if total > 0 else 0
-        lines.append(f"{medal} **{name}** — {p['elo']} pts ({rank_name}) | {w}W {d}D {l}L | Winrate {pct}%")
+        lines.append(f"{medal} **{name}**\n{rank_name} | {p['elo']} pts | {w}W {d}D {l}L | Winrate {pct}%")
     embed.description = chr(10).join(lines)
     await interaction.followup.send(embed=embed)
 
