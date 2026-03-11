@@ -2416,7 +2416,6 @@ async def rankedremove(interaction: discord.Interaction, player: discord.Member)
     await interaction.followup.send(f"✅ **{player.display_name}** has been removed from CFI Ranked.", ephemeral=True)
 
 @tree.command(name="rankedmatchmaking", description="Post the matchmaking button message (admin only)")
-@is_admin()
 async def rankedmatchmakingsetup(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     embed = discord.Embed(title="⚔️ Ranked Matchmaking", color=0x5865F2)
