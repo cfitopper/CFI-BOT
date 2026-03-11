@@ -1939,7 +1939,9 @@ async def on_interaction(interaction: discord.Interaction):
         mm_view.add_item(accept_btn)
         mm_view.add_item(cancel_btn)
         await interaction.response.send_message("✅ Matchmaking created!", ephemeral=True)
-        msg = await interaction.channel.send(embed=embed, view=mm_view)
+        ranked_role = discord.utils.get(interaction.guild.roles, name="CFI - Ranked")
+        ping_content = ranked_role.mention if ranked_role else ""
+        msg = await interaction.channel.send(content=ping_content, embed=embed, view=mm_view, allowed_mentions=discord.AllowedMentions(roles=True))
         active_matchmaking[msg.id] = uid
         asyncio.ensure_future(on_timeout_matchmaking(msg.id, interaction.channel))
         return
