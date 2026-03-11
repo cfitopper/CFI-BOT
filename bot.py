@@ -1630,14 +1630,14 @@ RANKED_RANKS = [
 RANKED_K = 32
 
 RANK_EMOJIS = {
-    "Bronze":    ":bronze:",
-    "Silver":    ":silver:",
-    "Gold":      ":gold:",
-    "Elite":     ":elite:",
-    "Emerald":   ":emerald:",
-    "Emperor":   ":emperor:",
-    "Supernova": ":supernova:",
-    "Eternal":   ":eternal:",
+    "Bronze":    "<:bronze:1479953703862538403>",
+    "Silver":    "<:silver:1479953642646933749>",
+    "Gold":      "<:gold:1479953563181383690>",
+    "Elite":     "<:elite:1479953602117243032>",
+    "Emerald":   "<:emerald:1479950562286899252>",
+    "Emperor":   "<:emperor:1479950432523518044>",
+    "Supernova": "<:supernova:1479950603332358184>",
+    "Eternal":   "<:eternal:1479950489192759417>",
 }
 
 def get_ranked_rank(elo):
