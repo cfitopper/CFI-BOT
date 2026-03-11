@@ -2195,9 +2195,10 @@ async def on_interaction(interaction: discord.Interaction):
     player="Select a player",
     elo="New Elo points",
     wins="New win count",
-    losses="New loss count"
+    losses="New loss count",
+    draws="New draw count"
 )
-async def rankedsetstats(interaction: discord.Interaction, player: discord.Member, elo: int = None, wins: int = None, losses: int = None):
+async def rankedsetstats(interaction: discord.Interaction, player: discord.Member, elo: int = None, wins: int = None, losses: int = None, draws: int = None):
     uid = str(player.id)
     conn = get_db()
     c = conn.cursor()
@@ -2224,6 +2225,10 @@ async def rankedsetstats(interaction: discord.Interaction, player: discord.Membe
         updates.append("losses = %s")
         values.append(losses)
         changed.append(f"Losses: {losses}")
+    if draws is not None:
+        updates.append("draws = %s")
+        values.append(draws)
+        changed.append(f"Draws: {draws}")
 
     if not updates:
         conn.close()
