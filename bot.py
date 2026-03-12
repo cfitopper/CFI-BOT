@@ -499,6 +499,7 @@ async def removeplayer(interaction: discord.Interaction, player: discord.Member)
     conn = get_db()
     c = conn.cursor()
     c.execute("DELETE FROM players WHERE name = %s", (name,))
+    c.execute("DELETE FROM overview_ranking WHERE player_id = %s", (name,))
     c.execute("SELECT * FROM players WHERE tier = %s ORDER BY rank_in_tier ASC", (player_tier,))
     remaining = [dict(p) for p in c.fetchall()]
     for i, rp in enumerate(remaining):
@@ -1108,7 +1109,8 @@ async def overview(interaction: discord.Interaction):
                     winrate = round((p["wins"] / total * 100)) if total > 0 else 0
                     lines.append(f"{global_rank}. <@{uid}>" + chr(10) + f"W: {p['wins']} | L: {p['losses']} | Goals: {p['goals']} | Winrate: {winrate}%")
                 else:
-                    lines.append(f"{global_rank}. <@{uid}>")
+                    global_rank += 1
+                    continue
                 global_rank += 1
 
             field_chunks = []
@@ -1333,6 +1335,7 @@ async def removeandfill(interaction: discord.Interaction, player: discord.Member
     conn = get_db()
     c = conn.cursor()
     c.execute("DELETE FROM players WHERE name = %s", (uid,))
+    c.execute("DELETE FROM overview_ranking WHERE player_id = %s", (uid,))
     conn.commit()
     conn.close()
 
@@ -1419,6 +1422,7 @@ async def removebyid(interaction: discord.Interaction, user_id: str):
     conn = get_db()
     c = conn.cursor()
     c.execute("DELETE FROM players WHERE name = %s", (uid,))
+    c.execute("DELETE FROM overview_ranking WHERE player_id = %s", (uid,))
     conn.commit()
     conn.close()
 
