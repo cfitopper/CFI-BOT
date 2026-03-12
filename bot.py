@@ -1905,6 +1905,174 @@ async def rankedscore(interaction: discord.Interaction, opponent: discord.Member
     asyncio.ensure_future(on_timeout_ranked(msg.id, interaction.channel))
 
 
+RANKED_MOD_ROLES = ["Admin", "CFI - Dev", "BOSS", "Head-moderator (crew)", "Moderator (crew)", "League Moderator (crew)"]
+
+@tree.command(name="rankedmatchscore", description="Manually submit a ranked score between two players (mods/dev only)")
+@app_commands.describe(player1="First player", player2="Second player", goals_player1="Goals for player 1", goals_player2="Goals for player 2")
+async def rankedmatchscore(interaction: discord.Interaction, player1: discord.Member, player2: discord.Member, goals_player1: int, goals_player2: int):
+    await interaction.response.defer(ephemeral=True)
+    user_roles = [r.name for r in interaction.user.roles]
+    if not any(r in user_roles for r in RANKED_MOD_ROLES):
+        await interaction.followup.send("❌ You don't have permission to use this command.", ephemeral=True)
+        return
+
+    p1_id = str(player1.id)
+    p2_id = str(player2.id)
+
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT * FROM ranked_players WHERE name = %s", (p1_id,))
+    p1_data = c.fetchone()
+    c.execute("SELECT * FROM ranked_players WHERE name = %s", (p2_id,))
+    p2_data = c.fetchone()
+    conn.close()
+
+    if not p1_data:
+        await interaction.followup.send(f"❌ {player1.display_name} is not registered for Ranked!", ephemeral=True)
+        return
+    if not p2_data:
+        await interaction.followup.send(f"❌ {player2.display_name} is not registered for Ranked!", ephemeral=True)
+        return
+
+    p1_data = dict(p1_data)
+    p2_data = dict(p2_data)
+    s1, s2 = goals_player1, goals_player2
+    is_draw = s1 == s2
+
+    conn = get_db()
+    c = conn.cursor()
+    if is_draw:
+        new_p1_elo, new_p2_elo, change_1, change_2 = calc_elo_draw(p1_data["elo"], p2_data["elo"])
+        c.execute("UPDATE ranked_players SET elo = %s, draws = draws + 1 WHERE name = %s", (new_p1_elo, p1_id))
+        c.execute("UPDATE ranked_players SET elo = %s, draws = draws + 1 WHERE name = %s", (new_p2_elo, p2_id))
+        c.execute("INSERT INTO ranked_matches (player1, player2, score1, score2, elo_change, date) VALUES (%s, %s, %s, %s, %s, %s)",
+                  (p1_id, p2_id, s1, s2, 0, datetime.now().isoformat()))
+    else:
+        winner_id = p1_id if s1 > s2 else p2_id
+        loser_id  = p2_id if s1 > s2 else p1_id
+        winner_data = p1_data if s1 > s2 else p2_data
+        loser_data  = p2_data if s1 > s2 else p1_data
+        new_winner_elo, new_loser_elo, gain, loss = calc_elo(winner_data["elo"], loser_data["elo"])
+        c.execute("UPDATE ranked_players SET elo = %s, wins = wins + 1 WHERE name = %s", (new_winner_elo, winner_id))
+        c.execute("UPDATE ranked_players SET elo = %s, losses = losses + 1 WHERE name = %s", (new_loser_elo, loser_id))
+        c.execute("INSERT INTO ranked_matches (player1, player2, score1, score2, elo_change, date) VALUES (%s, %s, %s, %s, %s, %s)",
+                  (p1_id, p2_id, s1, s2, gain, datetime.now().isoformat()))
+    conn.commit()
+    conn.close()
+
+    p1_name = player1.display_name
+    p2_name = player2.display_name
+
+    if is_draw:
+        p1_rank = get_rank_display(new_p1_elo)
+        p2_rank = get_rank_display(new_p2_elo)
+
+        banner_file = None
+        try:
+            async with aiohttp.ClientSession() as session:
+                p1_av_bytes = await fetch_avatar(session, player1.display_avatar.url)
+                p2_av_bytes = await fetch_avatar(session, player2.display_avatar.url)
+            banner_io = generate_ranked_banner(
+                winner_name=p1_name, loser_name=p2_name,
+                score_winner=s1, score_loser=s2,
+                winner_elo=new_p1_elo, loser_elo=new_p2_elo,
+                elo_gain=change_1, elo_loss=-change_2,
+                winner_rank=p1_rank, loser_rank=p2_rank,
+                winner_avatar_bytes=p1_av_bytes, loser_avatar_bytes=p2_av_bytes,
+            )
+            banner_file = discord.File(banner_io, filename="ranked_result.png")
+        except Exception as e:
+            print(f"Banner generation error: {e}")
+
+        embed = discord.Embed(title="🤝 Ranked Score Confirmed — Draw!", color=0xFFD700)
+        embed.description = (
+            f"<@{p1_id}> **{s1} - {s2}** <@{p2_id}>\n\n"
+            f"**{p1_name}**\n"
+            f"**Elo:** {new_p1_elo} pts ({p1_rank}) `+{change_1}`\n\n"
+            f"**{p2_name}**\n"
+            f"**Elo:** {new_p2_elo} pts ({p2_rank}) `+{change_2}`"
+        )
+        embed.set_footer(text=f"Submitted by {interaction.user.display_name}")
+    else:
+        winner_member = interaction.guild.get_member(int(winner_id))
+        loser_member  = interaction.guild.get_member(int(loser_id))
+        winner_name   = winner_member.display_name if winner_member else winner_id
+        loser_name    = loser_member.display_name  if loser_member  else loser_id
+        winner_rank = get_rank_display(new_winner_elo)
+        loser_rank  = get_rank_display(new_loser_elo)
+
+        banner_file = None
+        try:
+            async with aiohttp.ClientSession() as session:
+                winner_av_bytes = await fetch_avatar(session, winner_member.display_avatar.url if winner_member else None) if winner_member else None
+                loser_av_bytes  = await fetch_avatar(session, loser_member.display_avatar.url  if loser_member  else None) if loser_member  else None
+            banner_io = generate_ranked_banner(
+                winner_name=winner_name, loser_name=loser_name,
+                score_winner=max(s1, s2), score_loser=min(s1, s2),
+                winner_elo=new_winner_elo, loser_elo=new_loser_elo,
+                elo_gain=gain, elo_loss=loss,
+                winner_rank=winner_rank, loser_rank=loser_rank,
+                winner_avatar_bytes=winner_av_bytes, loser_avatar_bytes=loser_av_bytes,
+            )
+            banner_file = discord.File(banner_io, filename="ranked_result.png")
+        except Exception as e:
+            print(f"Banner generation error: {e}")
+
+        embed = discord.Embed(title="✅ Ranked Score Confirmed!", color=0x00ff88)
+        embed.description = (
+            f"<@{winner_id}> **{max(s1,s2)} - {min(s1,s2)}** <@{loser_id}>\n\n"
+            f"🏆 **{winner_name}** wins!\n"
+            f"**Elo:** {new_winner_elo} pts ({winner_rank}) `+{gain}`\n\n"
+            f"**{loser_name}**\n"
+            f"**Elo:** {new_loser_elo} pts ({loser_rank}) `-{loss}`"
+        )
+        embed.set_footer(text=f"Submitted by {interaction.user.display_name}")
+
+    ranked_channel = discord.utils.get(interaction.guild.text_channels, name="ranked-score")
+    if ranked_channel is None:
+        ranked_channel = interaction.channel
+
+    if banner_file:
+        embed.set_image(url="attachment://ranked_result.png")
+        await ranked_channel.send(embed=embed, file=banner_file, allowed_mentions=discord.AllowedMentions(users=True))
+    else:
+        await ranked_channel.send(embed=embed, allowed_mentions=discord.AllowedMentions(users=True))
+
+    await interaction.followup.send("✅ Score submitted!", ephemeral=True)
+
+    # Log to ranked-score-mods
+    try:
+        mods_channel = discord.utils.get(interaction.guild.text_channels, name="ranked-score-mods")
+        if mods_channel:
+            if is_draw:
+                undo_data = {
+                    "p1": p1_id, "p2": p2_id,
+                    "old_p1_elo": p1_data["elo"], "old_p2_elo": p2_data["elo"],
+                    "old_p1_wins": p1_data["wins"], "old_p1_losses": p1_data["losses"], "old_p1_draws": p1_data.get("draws", 0),
+                    "old_p2_wins": p2_data["wins"], "old_p2_losses": p2_data["losses"], "old_p2_draws": p2_data.get("draws", 0),
+                    "result": "draw"
+                }
+                undo_desc = f"**Draw:** <@{p1_id}> {s1} - {s2} <@{p2_id}>"
+            else:
+                undo_data = {
+                    "p1": winner_id, "p2": loser_id,
+                    "old_p1_elo": winner_data["elo"], "old_p2_elo": loser_data["elo"],
+                    "old_p1_wins": winner_data["wins"], "old_p1_losses": winner_data["losses"], "old_p1_draws": winner_data.get("draws", 0),
+                    "old_p2_wins": loser_data["wins"], "old_p2_losses": loser_data["losses"], "old_p2_draws": loser_data.get("draws", 0),
+                    "result": "win"
+                }
+                undo_desc = f"**Result:** <@{winner_id}> {max(s1,s2)} - {min(s1,s2)} <@{loser_id}>"
+            undo_embed = discord.Embed(title="📋 Ranked Score Logged", color=0x5865F2)
+            undo_embed.description = undo_desc + f"\nSubmitted by <@{interaction.user.id}>"
+            undo_view = discord.ui.View(timeout=None)
+            undo_btn = discord.ui.Button(label="🔄 Undo Score", style=discord.ButtonStyle.red,
+                custom_id=f"ranked_undo_{undo_data['p1']}_{undo_data['p2']}_{undo_data['old_p1_elo']}_{undo_data['old_p2_elo']}_{undo_data['old_p1_wins']}_{undo_data['old_p1_losses']}_{undo_data['old_p1_draws']}_{undo_data['old_p2_wins']}_{undo_data['old_p2_losses']}_{undo_data['old_p2_draws']}_{undo_data['result']}")
+            undo_view.add_item(undo_btn)
+            await mods_channel.send(embed=undo_embed, view=undo_view)
+    except Exception as e:
+        print(f"Error sending to ranked-score-mods: {e}")
+
+
 @bot.event
 async def on_interaction(interaction: discord.Interaction):
     if interaction.type != discord.InteractionType.component:
@@ -2034,12 +2202,15 @@ async def on_interaction(interaction: discord.Interaction):
             await interaction.response.send_message("❌ This score submission has expired.", ephemeral=True)
             return
         data = pending_ranked_scores[msg_id]
-        if str(uid) == str(data["submitter"]):
-            await interaction.response.send_message("❌ You can't confirm your own score submission!", ephemeral=True)
-            return
-        if str(uid) != str(data["player2"]):
-            await interaction.response.send_message("❌ Only the opponent can confirm this score.", ephemeral=True)
-            return
+        user_roles = [r.name for r in interaction.user.roles]
+        is_dev = "CFI - Dev" in user_roles
+        if not is_dev:
+            if str(uid) == str(data["submitter"]):
+                await interaction.response.send_message("❌ You can't confirm your own score submission!", ephemeral=True)
+                return
+            if str(uid) != str(data["player2"]):
+                await interaction.response.send_message("❌ Only the opponent can confirm this score.", ephemeral=True)
+                return
 
         p1_id = data["player1"]
         p2_id = data["player2"]
