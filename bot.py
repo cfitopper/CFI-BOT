@@ -2158,6 +2158,7 @@ async def on_interaction(interaction: discord.Interaction):
         ping_content = ranked_role.mention if ranked_role else ""
         msg = await interaction.channel.send(content=ping_content, embed=embed, view=mm_view, allowed_mentions=discord.AllowedMentions(roles=True))
         active_matchmaking[msg.id] = {"seeker": uid, "legs": legs}
+        print(f"[MM] {uid} zoekt match ({legs} leg{'s' if legs > 1 else ''}) | queue: {[v['seeker'] for v in active_matchmaking.values()]}")
         conn = get_db()
         log_matchmaking(conn, uid, "searching", legs=legs)
         conn.close()
