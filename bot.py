@@ -1700,6 +1700,16 @@ def calc_elo_draw(p1_elo, p2_elo):
 def log_matchmaking(conn, player_id, action, legs=None, opponent_id=None):
     c = conn.cursor()
     c.execute("""
+        CREATE TABLE IF NOT EXISTS ranked_matchmaking_log (
+            id SERIAL PRIMARY KEY,
+            player_id TEXT NOT NULL,
+            action TEXT NOT NULL,
+            legs INTEGER,
+            opponent_id TEXT,
+            timestamp TIMESTAMP DEFAULT NOW()
+        )
+    """)
+    c.execute("""
         INSERT INTO ranked_matchmaking_log (player_id, action, legs, opponent_id, timestamp)
         VALUES (%s, %s, %s, %s, NOW())
     """, (player_id, action, legs, opponent_id))
