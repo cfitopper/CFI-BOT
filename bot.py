@@ -1697,6 +1697,14 @@ def calc_elo_draw(p1_elo, p2_elo):
     new_p2 = p2_elo + change_2
     return new_p1, new_p2, change_1, change_2
 
+def log_matchmaking(conn, player_id, action, legs=None, opponent_id=None):
+    c = conn.cursor()
+    c.execute("""
+        INSERT INTO ranked_matchmaking_log (player_id, action, legs, opponent_id, timestamp)
+        VALUES (%s, %s, %s, %s, NOW())
+    """, (player_id, action, legs, opponent_id))
+    conn.commit()
+
 def setup_ranked_db(conn):
     c = conn.cursor()
     c.execute("""
@@ -1717,6 +1725,16 @@ def setup_ranked_db(conn):
             score2 INTEGER,
             elo_change INTEGER,
             date TEXT
+        )
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS ranked_matchmaking_log (
+            id SERIAL PRIMARY KEY,
+            player_id TEXT NOT NULL,
+            action TEXT NOT NULL,
+            legs INTEGER,
+            opponent_id TEXT,
+            timestamp TIMESTAMP DEFAULT NOW()
         )
     """)
     # Migration: add draws column if it doesn't exist yet
@@ -1832,7 +1850,10 @@ def has_ranked_role(interaction: discord.Interaction) -> bool:
 async def on_timeout_matchmaking(message_id, channel):
     await asyncio.sleep(600)
     if message_id in active_matchmaking:
-        del active_matchmaking[message_id]
+        mm = active_matchmaking.pop(message_id)
+        conn = get_db()
+        log_matchmaking(conn, mm["seeker"], "timeout", legs=mm["legs"])
+        conn.close()
         try:
             msg_obj = await channel.fetch_message(message_id)
             await msg_obj.delete()
@@ -2137,6 +2158,9 @@ async def on_interaction(interaction: discord.Interaction):
         ping_content = ranked_role.mention if ranked_role else ""
         msg = await interaction.channel.send(content=ping_content, embed=embed, view=mm_view, allowed_mentions=discord.AllowedMentions(roles=True))
         active_matchmaking[msg.id] = {"seeker": uid, "legs": legs}
+        conn = get_db()
+        log_matchmaking(conn, uid, "searching", legs=legs)
+        conn.close()
         asyncio.ensure_future(on_timeout_matchmaking(msg.id, interaction.channel))
         return
 
@@ -2163,6 +2187,10 @@ async def on_interaction(interaction: discord.Interaction):
         accepter_member = interaction.guild.get_member(int(uid))
         host = random.choice([seeker, accepter_member])
         del active_matchmaking[msg_id]
+        conn = get_db()
+        log_matchmaking(conn, seeker_id, "match_found", legs=legs, opponent_id=uid)
+        log_matchmaking(conn, uid, "match_found", legs=legs, opponent_id=seeker_id)
+        conn.close()
         legs_label = f"{legs} leg{'s' if legs > 1 else ''}"
         match_embed = discord.Embed(title="✅ Match Found!", color=0x00ff88)
         match_embed.description = (
@@ -2195,7 +2223,12 @@ async def on_interaction(interaction: discord.Interaction):
         if uid != active_matchmaking[msg_id]["seeker"]:
             await interaction.response.send_message("❌ Only the person who opened matchmaking can cancel it.", ephemeral=True)
             return
+        seeker_id = active_matchmaking[msg_id]["seeker"]
+        cancel_legs = active_matchmaking[msg_id]["legs"]
         del active_matchmaking[msg_id]
+        conn = get_db()
+        log_matchmaking(conn, seeker_id, "cancelled", legs=cancel_legs)
+        conn.close()
         await interaction.message.delete()
         await interaction.response.send_message("❌ Matchmaking cancelled.", ephemeral=True)
         return
