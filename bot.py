@@ -2174,7 +2174,7 @@ async def on_interaction(interaction: discord.Interaction):
         msg = await interaction.channel.send(content=ping_content, embed=embed, view=mm_view, allowed_mentions=discord.AllowedMentions(roles=True))
         active_matchmaking[msg.id] = {"seeker": uid, "legs": legs}
         queue_names = [interaction.guild.get_member(int(v['seeker'])).display_name if interaction.guild.get_member(int(v['seeker'])) else v['seeker'] for v in active_matchmaking.values()]
-        print(f"[MM] {interaction.user.display_name} zoekt match ({legs} leg{'s' if legs > 1 else ''}) | queue: {queue_names}")
+
         mods_channel = discord.utils.get(interaction.guild.text_channels, name="ranked-score-mods")
         if mods_channel:
             queue_str = "\n".join(f"- **{n}**" for n in queue_names) if queue_names else "*(leeg)*"
