@@ -1,6 +1,7 @@
 import asyncio
 import discord
 import random
+from typing import Optional
 import aiohttp
 from discord.ext import commands, tasks
 from discord import app_commands
@@ -511,25 +512,39 @@ async def removeplayer(interaction: discord.Interaction, player: discord.Member)
 @tree.command(name="score", description="Submit a match score (admin only)")
 @can_score()
 @app_commands.describe(
-    player1="Select player 1",
+    player1="Select player 1 (or leave empty and use player1_id)",
     goals1="Goals scored by player 1",
-    player2="Select player 2",
-    goals2="Goals scored by player 2"
+    player2="Select player 2 (or leave empty and use player2_id)",
+    goals2="Goals scored by player 2",
+    player1_id="Discord ID of player 1 (use instead of player1)",
+    player2_id="Discord ID of player 2 (use instead of player2)"
 )
-async def score(interaction: discord.Interaction, player1: discord.Member, goals1: int, player2: discord.Member, goals2: int):
+async def score(interaction: discord.Interaction, goals1: int, goals2: int,
+                player1: Optional[discord.Member] = None, player2: Optional[discord.Member] = None,
+                player1_id: Optional[str] = None, player2_id: Optional[str] = None):
     await interaction.response.defer()
 
-    name1 = str(player1.id)
-    name2 = str(player2.id)
+    if player1 is None and player1_id is None:
+        await interaction.followup.send("❌ Geef player1 of player1_id op!", ephemeral=True)
+        return
+    if player2 is None and player2_id is None:
+        await interaction.followup.send("❌ Geef player2 of player2_id op!", ephemeral=True)
+        return
+
+    name1 = str(player1.id) if player1 else player1_id.strip()
+    name2 = str(player2.id) if player2 else player2_id.strip()
 
     p1 = get_player(name1)
     p2 = get_player(name2)
 
+    label1 = player1.display_name if player1 else name1
+    label2 = player2.display_name if player2 else name2
+
     if not p1:
-        await interaction.followup.send(f"❌ {player1.display_name} not found!")
+        await interaction.followup.send(f"❌ {label1} not found!")
         return
     if not p2:
-        await interaction.followup.send(f"❌ {player2.display_name} not found!")
+        await interaction.followup.send(f"❌ {label2} not found!")
         return
     if goals1 == goals2:
         await interaction.followup.send("❌ Draws are not allowed!")
