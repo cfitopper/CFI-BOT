@@ -1720,6 +1720,28 @@ def log_matchmaking(conn, player_id, action, legs=None, opponent_id=None):
     """, (player_id, action, legs, opponent_id))
     conn.commit()
 
+def _calc_streaks_from_db(c, pid):
+    """Calculate (current_winstreak, max_winstreak) for a player from ranked_matches."""
+    c.execute("""
+        SELECT player1, player2, score1, score2
+        FROM ranked_matches WHERE player1 = %s OR player2 = %s ORDER BY id ASC
+    """, (pid, pid))
+    matches = [dict(m) for m in c.fetchall()]
+    curr = 0
+    best = 0
+    for m in matches:
+        s1, s2 = m["score1"], m["score2"]
+        if s1 == s2:
+            curr = 0
+        elif (m["player1"] == pid and s1 > s2) or (m["player2"] == pid and s2 > s1):
+            curr += 1
+            if curr > best:
+                best = curr
+        else:
+            curr = 0
+    return curr, best
+
+
 def setup_ranked_db(conn):
     c = conn.cursor()
     c.execute("""
@@ -1757,7 +1779,49 @@ def setup_ranked_db(conn):
         c.execute("ALTER TABLE ranked_players ADD COLUMN draws INTEGER DEFAULT 0")
         conn.commit()
     except Exception:
-        pass
+        conn.rollback()
+
+    # Migration: add winstreak and goals columns
+    new_cols = []
+    for col, defn in [
+        ("current_winstreak", "INTEGER DEFAULT 0"),
+        ("max_winstreak", "INTEGER DEFAULT 0"),
+        ("goals_for", "INTEGER DEFAULT 0"),
+        ("goals_against", "INTEGER DEFAULT 0"),
+    ]:
+        try:
+            c.execute(f"ALTER TABLE ranked_players ADD COLUMN {col} {defn}")
+            conn.commit()
+            new_cols.append(col)
+        except Exception:
+            conn.rollback()
+
+    # Backfill goals from existing matches if columns were just added
+    if "goals_for" in new_cols or "goals_against" in new_cols:
+        c.execute("SELECT name FROM ranked_players")
+        pids = [r["name"] for r in c.fetchall()]
+        for pid in pids:
+            c.execute("""
+                SELECT
+                    COALESCE(SUM(CASE WHEN player1 = %s THEN score1 WHEN player2 = %s THEN score2 ELSE 0 END), 0) AS gf,
+                    COALESCE(SUM(CASE WHEN player1 = %s THEN score2 WHEN player2 = %s THEN score1 ELSE 0 END), 0) AS ga
+                FROM ranked_matches WHERE player1 = %s OR player2 = %s
+            """, (pid, pid, pid, pid, pid, pid))
+            row = dict(c.fetchone())
+            c.execute("UPDATE ranked_players SET goals_for = %s, goals_against = %s WHERE name = %s",
+                      (row["gf"], row["ga"], pid))
+        conn.commit()
+
+    # Backfill winstreaks from existing matches if columns were just added
+    if "current_winstreak" in new_cols or "max_winstreak" in new_cols:
+        c.execute("SELECT name FROM ranked_players")
+        pids = [r["name"] for r in c.fetchall()]
+        for pid in pids:
+            curr_ws, max_ws = _calc_streaks_from_db(c, pid)
+            c.execute("UPDATE ranked_players SET current_winstreak = %s, max_winstreak = %s WHERE name = %s",
+                      (curr_ws, max_ws, pid))
+        conn.commit()
+
     conn.commit()
 
 pending_ranked_scores = {}
@@ -1804,6 +1868,10 @@ async def rankedprofile(interaction: discord.Interaction, player: discord.Member
     d = p.get("draws", 0) or 0
     total = p["wins"] + p["losses"] + d
     winrate = round((p["wins"] / total * 100)) if total > 0 else 0
+    gf = p.get("goals_for", 0) or 0
+    ga = p.get("goals_against", 0) or 0
+    curr_ws = p.get("current_winstreak", 0) or 0
+    max_ws = p.get("max_winstreak", 0) or 0
 
     embed = discord.Embed(title=f"⚽ {target.display_name}", color=0xffaa00)
     embed.set_thumbnail(url=target.display_avatar.url)
@@ -1815,7 +1883,10 @@ async def rankedprofile(interaction: discord.Interaction, player: discord.Member
         f"**Draws:** {d}\n"
         f"**Losses:** {p['losses']}\n"
         f"**Matches Played:** {total}\n"
-        f"**Winrate:** {winrate}%"
+        f"**Winrate:** {winrate}%\n"
+        f"**Goals:** {gf} scored / {ga} conceded\n"
+        f"**Current Winstreak:** 🔥 {curr_ws}\n"
+        f"**Best Winstreak:** ⭐ {max_ws}"
     )
     await interaction.followup.send(embed=embed)
 
@@ -1842,12 +1913,11 @@ async def rankedleaderboard(interaction: discord.Interaction):
         rank_name = get_rank_display(p["elo"])
         w = p.get("wins", 0) or 0
         l = p.get("losses", 0) or 0
-        total = w + l
-        pct = round((w / total) * 100) if total > 0 else 0
         d = p.get("draws", 0) or 0
         total = w + l + d
         pct = round((w / total) * 100) if total > 0 else 0
-        lines.append(f"{medal} **{name}**\n{rank_name} | {p['elo']} pts | {w}W {d}D {l}L | Winrate {pct}%")
+        max_ws = p.get("max_winstreak", 0) or 0
+        lines.append(f"{medal} **{name}**\n{rank_name} | {p['elo']} pts | {w}W {d}D {l}L | Winrate {pct}% | ⭐ Best streak: {max_ws}")
     embed.description = chr(10).join(lines)
     await interaction.followup.send(embed=embed)
 
@@ -1983,8 +2053,12 @@ async def rankedmatchscore(interaction: discord.Interaction, player1: discord.Me
     c = conn.cursor()
     if is_draw:
         new_p1_elo, new_p2_elo, change_1, change_2 = calc_elo_draw(p1_data["elo"], p2_data["elo"])
-        c.execute("UPDATE ranked_players SET elo = %s, draws = draws + 1 WHERE name = %s", (new_p1_elo, p1_id))
-        c.execute("UPDATE ranked_players SET elo = %s, draws = draws + 1 WHERE name = %s", (new_p2_elo, p2_id))
+        c.execute("""UPDATE ranked_players SET elo = %s, draws = draws + 1,
+                     goals_for = goals_for + %s, goals_against = goals_against + %s,
+                     current_winstreak = 0 WHERE name = %s""", (new_p1_elo, s1, s2, p1_id))
+        c.execute("""UPDATE ranked_players SET elo = %s, draws = draws + 1,
+                     goals_for = goals_for + %s, goals_against = goals_against + %s,
+                     current_winstreak = 0 WHERE name = %s""", (new_p2_elo, s2, s1, p2_id))
         c.execute("INSERT INTO ranked_matches (player1, player2, score1, score2, elo_change, date) VALUES (%s, %s, %s, %s, %s, %s)",
                   (p1_id, p2_id, s1, s2, 0, datetime.now().isoformat()))
     else:
@@ -1992,9 +2066,17 @@ async def rankedmatchscore(interaction: discord.Interaction, player1: discord.Me
         loser_id  = p2_id if s1 > s2 else p1_id
         winner_data = p1_data if s1 > s2 else p2_data
         loser_data  = p2_data if s1 > s2 else p1_data
+        winner_goals = s1 if s1 > s2 else s2
+        loser_goals  = s2 if s1 > s2 else s1
         new_winner_elo, new_loser_elo, gain, loss = calc_elo(winner_data["elo"], loser_data["elo"])
-        c.execute("UPDATE ranked_players SET elo = %s, wins = wins + 1 WHERE name = %s", (new_winner_elo, winner_id))
-        c.execute("UPDATE ranked_players SET elo = %s, losses = losses + 1 WHERE name = %s", (new_loser_elo, loser_id))
+        c.execute("""UPDATE ranked_players SET elo = %s, wins = wins + 1,
+                     goals_for = goals_for + %s, goals_against = goals_against + %s,
+                     current_winstreak = current_winstreak + 1,
+                     max_winstreak = GREATEST(max_winstreak, current_winstreak + 1)
+                     WHERE name = %s""", (new_winner_elo, winner_goals, loser_goals, winner_id))
+        c.execute("""UPDATE ranked_players SET elo = %s, losses = losses + 1,
+                     goals_for = goals_for + %s, goals_against = goals_against + %s,
+                     current_winstreak = 0 WHERE name = %s""", (new_loser_elo, loser_goals, winner_goals, loser_id))
         c.execute("INSERT INTO ranked_matches (player1, player2, score1, score2, elo_change, date) VALUES (%s, %s, %s, %s, %s, %s)",
                   (p1_id, p2_id, s1, s2, gain, datetime.now().isoformat()))
     conn.commit()
@@ -2287,8 +2369,12 @@ async def on_interaction(interaction: discord.Interaction):
 
         if is_draw:
             new_p1_elo, new_p2_elo, change_1, change_2 = calc_elo_draw(p1_data["elo"], p2_data["elo"])
-            c.execute("UPDATE ranked_players SET elo = %s, draws = draws + 1 WHERE name = %s", (new_p1_elo, p1_id))
-            c.execute("UPDATE ranked_players SET elo = %s, draws = draws + 1 WHERE name = %s", (new_p2_elo, p2_id))
+            c.execute("""UPDATE ranked_players SET elo = %s, draws = draws + 1,
+                         goals_for = goals_for + %s, goals_against = goals_against + %s,
+                         current_winstreak = 0 WHERE name = %s""", (new_p1_elo, s1, s2, p1_id))
+            c.execute("""UPDATE ranked_players SET elo = %s, draws = draws + 1,
+                         goals_for = goals_for + %s, goals_against = goals_against + %s,
+                         current_winstreak = 0 WHERE name = %s""", (new_p2_elo, s2, s1, p2_id))
             c.execute("""
                 INSERT INTO ranked_matches (player1, player2, score1, score2, elo_change, date)
                 VALUES (%s, %s, %s, %s, %s, %s)
@@ -2298,9 +2384,17 @@ async def on_interaction(interaction: discord.Interaction):
             loser_id  = p2_id if s1 > s2 else p1_id
             winner_data = p1_data if s1 > s2 else p2_data
             loser_data  = p2_data if s1 > s2 else p1_data
+            winner_goals = s1 if s1 > s2 else s2
+            loser_goals  = s2 if s1 > s2 else s1
             new_winner_elo, new_loser_elo, gain, loss = calc_elo(winner_data["elo"], loser_data["elo"])
-            c.execute("UPDATE ranked_players SET elo = %s, wins = wins + 1 WHERE name = %s", (new_winner_elo, winner_id))
-            c.execute("UPDATE ranked_players SET elo = %s, losses = losses + 1 WHERE name = %s", (new_loser_elo, loser_id))
+            c.execute("""UPDATE ranked_players SET elo = %s, wins = wins + 1,
+                         goals_for = goals_for + %s, goals_against = goals_against + %s,
+                         current_winstreak = current_winstreak + 1,
+                         max_winstreak = GREATEST(max_winstreak, current_winstreak + 1)
+                         WHERE name = %s""", (new_winner_elo, winner_goals, loser_goals, winner_id))
+            c.execute("""UPDATE ranked_players SET elo = %s, losses = losses + 1,
+                         goals_for = goals_for + %s, goals_against = goals_against + %s,
+                         current_winstreak = 0 WHERE name = %s""", (new_loser_elo, loser_goals, winner_goals, loser_id))
             c.execute("""
                 INSERT INTO ranked_matches (player1, player2, score1, score2, elo_change, date)
                 VALUES (%s, %s, %s, %s, %s, %s)
@@ -2439,10 +2533,32 @@ async def on_interaction(interaction: discord.Interaction):
             old_p2_wins, old_p2_losses, old_p2_draws = int(parts[7]), int(parts[8]), int(parts[9])
             conn = get_db()
             c = conn.cursor()
+            # Delete the most recent match between these two players
+            c.execute("""
+                DELETE FROM ranked_matches WHERE id = (
+                    SELECT id FROM ranked_matches
+                    WHERE (player1 = %s AND player2 = %s) OR (player1 = %s AND player2 = %s)
+                    ORDER BY id DESC LIMIT 1
+                )
+            """, (p1_id, p2_id, p2_id, p1_id))
+            # Restore elo/wins/losses/draws
             c.execute("UPDATE ranked_players SET elo=%s, wins=%s, losses=%s, draws=%s WHERE name=%s",
                       (old_p1_elo, old_p1_wins, old_p1_losses, old_p1_draws, p1_id))
             c.execute("UPDATE ranked_players SET elo=%s, wins=%s, losses=%s, draws=%s WHERE name=%s",
                       (old_p2_elo, old_p2_wins, old_p2_losses, old_p2_draws, p2_id))
+            # Recalculate goals and streaks for both players from remaining matches
+            for pid in [p1_id, p2_id]:
+                c.execute("""
+                    SELECT
+                        COALESCE(SUM(CASE WHEN player1 = %s THEN score1 WHEN player2 = %s THEN score2 ELSE 0 END), 0) AS gf,
+                        COALESCE(SUM(CASE WHEN player1 = %s THEN score2 WHEN player2 = %s THEN score1 ELSE 0 END), 0) AS ga
+                    FROM ranked_matches WHERE player1 = %s OR player2 = %s
+                """, (pid, pid, pid, pid, pid, pid))
+                goals_row = dict(c.fetchone())
+                curr_ws, max_ws = _calc_streaks_from_db(c, pid)
+                c.execute("""UPDATE ranked_players SET goals_for=%s, goals_against=%s,
+                             current_winstreak=%s, max_winstreak=%s WHERE name=%s""",
+                          (goals_row["gf"], goals_row["ga"], curr_ws, max_ws, pid))
             conn.commit()
             conn.close()
             await interaction.response.edit_message(content=f"✅ Score undone by **{interaction.user.display_name}**.", embed=None, view=None)
@@ -2749,7 +2865,8 @@ def build_leaderboard_embed(guild):
         d = p.get("draws", 0) or 0
         total = w + l + d
         pct = round((w / total) * 100) if total > 0 else 0
-        lines.append(f"{medal} **{name}**\n{rank_name} | {p['elo']} pts | {w}W {d}D {l}L | Winrate {pct}%")
+        max_ws = p.get("max_winstreak", 0) or 0
+        lines.append(f"{medal} **{name}**\n{rank_name} | {p['elo']} pts | {w}W {d}D {l}L | Winrate {pct}% | ⭐ Best streak: {max_ws}")
     embed.description = chr(10).join(lines)
     return embed
 
