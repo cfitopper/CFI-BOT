@@ -2111,6 +2111,9 @@ async def rankedmatchscore(interaction: discord.Interaction, player1: discord.Me
     conn.commit()
     conn.close()
 
+    if not is_draw:
+        await check_and_award_challenge_roles(interaction.guild, winner_id, loser_id, winner_goals, loser_goals, new_winner_streak)
+
     p1_name = player1.display_name
     p2_name = player2.display_name
 
@@ -2437,6 +2440,9 @@ async def on_interaction(interaction: discord.Interaction):
         conn.commit()
         conn.close()
         del pending_ranked_scores[msg_id]
+
+        if not is_draw:
+            await check_and_award_challenge_roles(interaction.guild, winner_id, loser_id, winner_goals, loser_goals, new_winner_streak)
 
         if is_draw:
             p1_member = interaction.guild.get_member(int(p1_id))
@@ -2935,6 +2941,85 @@ def run_web():
     app.run(host="0.0.0.0", port=8080)
 
 Thread(target=run_web).start()
+
+
+async def check_and_award_challenge_roles(guild, winner_id, loser_id, winner_goals, loser_goals, new_winner_streak):
+    """Check and award challenge roles after a ranked match (non-draw only)."""
+    try:
+        conn = get_db()
+        c = conn.cursor()
+
+        # Top-10 leaderboard player IDs
+        c.execute("SELECT name FROM ranked_players ORDER BY elo DESC, name ASC LIMIT 10")
+        leaderboard_ids = {row["name"] for row in c.fetchall()}
+
+        # Updated stats for both players
+        c.execute("SELECT * FROM ranked_players WHERE name = %s", (winner_id,))
+        winner_row = dict(c.fetchone())
+        c.execute("SELECT * FROM ranked_players WHERE name = %s", (loser_id,))
+        loser_row = dict(c.fetchone())
+
+        # Invulnerable: clean-sheet wins against leaderboard players
+        invulnerable_winner = False
+        if leaderboard_ids:
+            placeholders = ",".join(["%s"] * len(leaderboard_ids))
+            c.execute(f"""
+                SELECT COUNT(*) AS cnt FROM ranked_matches
+                WHERE (
+                    (player1 = %s AND score1 > score2 AND score2 = 0 AND player2 IN ({placeholders}))
+                    OR
+                    (player2 = %s AND score2 > score1 AND score1 = 0 AND player1 IN ({placeholders}))
+                )
+            """, (winner_id, *leaderboard_ids, winner_id, *leaderboard_ids))
+            row_inv = c.fetchone()
+            invulnerable_winner = (row_inv and (row_inv["cnt"] or 0) >= 3)
+
+        conn.close()
+
+        winner_member = guild.get_member(int(winner_id))
+        loser_member = guild.get_member(int(loser_id))
+
+        roles_to_award = {}  # member -> list of role names
+
+        # ── VICTORIOUS: win 10 in a row ──
+        if new_winner_streak >= 10 and winner_member:
+            roles_to_award.setdefault(winner_member, []).append("Victorious")
+
+        # ── GOD STRIKER: score 200 goals across 40 matches ──
+        for member, row in [(winner_member, winner_row), (loser_member, loser_row)]:
+            if not member:
+                continue
+            total_matches = (row.get("wins", 0) or 0) + (row.get("losses", 0) or 0) + (row.get("draws", 0) or 0)
+            gf = row.get("goals_for", 0) or 0
+            if gf >= 200 and total_matches >= 40:
+                roles_to_award.setdefault(member, []).append("God striker")
+
+        # ── PHENOMENON: score 7+ goals in 1 match vs a leaderboard player ──
+        if winner_goals >= 7 and loser_id in leaderboard_ids and winner_member:
+            roles_to_award.setdefault(winner_member, []).append("Phenomenon")
+
+        # ── INVULNERABLE: 3+ clean-sheet wins vs leaderboard players ──
+        if invulnerable_winner and winner_member:
+            roles_to_award.setdefault(winner_member, []).append("Invulnerable")
+
+        # Award roles and announce
+        ranked_channel = discord.utils.get(guild.text_channels, name="ranked-score")
+        for member, role_names in roles_to_award.items():
+            for role_name in role_names:
+                role = discord.utils.get(guild.roles, name=role_name)
+                if role and role not in member.roles:
+                    try:
+                        await member.add_roles(role)
+                        print(f"🏅 Awarded '{role_name}' to {member.display_name}")
+                        if ranked_channel:
+                            await ranked_channel.send(
+                                f"🏅 <@{member.id}> heeft de **{role_name}** challenge rol verdiend! 🎉",
+                                allowed_mentions=discord.AllowedMentions(users=True)
+                            )
+                    except Exception as e:
+                        print(f"❌ Failed to award '{role_name}' to {member.display_name}: {e}")
+    except Exception as e:
+        print(f"❌ check_and_award_challenge_roles error: {e}")
 
 
 def build_leaderboard_embed(guild):
