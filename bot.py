@@ -1829,10 +1829,8 @@ def setup_ranked_db(conn):
             FROM ranked_matches WHERE player1 = %s OR player2 = %s
         """, (pid, pid, pid, pid, pid, pid))
         row = dict(c.fetchone())
-        curr_ws, max_ws = _calc_streaks_from_db(c, pid)
-        c.execute("""UPDATE ranked_players SET goals_for = %s, goals_against = %s,
-                     current_winstreak = %s, max_winstreak = %s WHERE name = %s""",
-                  (row["gf"], row["ga"], curr_ws, max_ws, pid))
+        c.execute("""UPDATE ranked_players SET goals_for = %s, goals_against = %s WHERE name = %s""",
+                  (row["gf"], row["ga"], pid))
     conn.commit()
 
     # One-time retroactive coin backfill for existing players.
