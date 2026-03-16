@@ -1685,6 +1685,25 @@ def get_rank_display(elo):
     emoji = RANK_EMOJIS.get(name, "")
     return f"{name} {emoji}"
 
+TIER_ROLE_NAMES = [r["name"] for r in RANKED_RANKS]
+
+async def assign_ranked_tier_role(guild, member, new_elo):
+    """Remove old tier roles and assign the correct one based on new ELO."""
+    try:
+        new_tier = get_ranked_rank(new_elo)
+        for tier_name in TIER_ROLE_NAMES:
+            role = discord.utils.get(guild.roles, name=tier_name)
+            if not role:
+                continue
+            if tier_name == new_tier:
+                if role not in member.roles:
+                    await member.add_roles(role)
+            else:
+                if role in member.roles:
+                    await member.remove_roles(role)
+    except Exception as e:
+        print(f"❌ assign_ranked_tier_role error for {member}: {e}")
+
 def calc_elo(winner_elo, loser_elo):
     expected_w = 1 / (1 + 10 ** ((loser_elo - winner_elo) / 400))
     expected_l = 1 - expected_w
@@ -2111,6 +2130,22 @@ async def rankedmatchscore(interaction: discord.Interaction, player1: discord.Me
     conn.commit()
     conn.close()
 
+    # Sync tier roles for both players
+    p1_member = interaction.guild.get_member(int(p1_id))
+    p2_member = interaction.guild.get_member(int(p2_id))
+    if is_draw:
+        if p1_member:
+            await assign_ranked_tier_role(interaction.guild, p1_member, new_p1_elo)
+        if p2_member:
+            await assign_ranked_tier_role(interaction.guild, p2_member, new_p2_elo)
+    else:
+        winner_member = interaction.guild.get_member(int(winner_id))
+        loser_member  = interaction.guild.get_member(int(loser_id))
+        if winner_member:
+            await assign_ranked_tier_role(interaction.guild, winner_member, new_winner_elo)
+        if loser_member:
+            await assign_ranked_tier_role(interaction.guild, loser_member, new_loser_elo)
+
     if not is_draw:
         await check_and_award_challenge_roles(interaction.guild, winner_id, loser_id, winner_goals, loser_goals, new_winner_streak)
 
@@ -2440,6 +2475,22 @@ async def on_interaction(interaction: discord.Interaction):
         conn.commit()
         conn.close()
         del pending_ranked_scores[msg_id]
+
+        # Sync tier roles for both players
+        _p1m = interaction.guild.get_member(int(p1_id))
+        _p2m = interaction.guild.get_member(int(p2_id))
+        if is_draw:
+            if _p1m:
+                await assign_ranked_tier_role(interaction.guild, _p1m, new_p1_elo)
+            if _p2m:
+                await assign_ranked_tier_role(interaction.guild, _p2m, new_p2_elo)
+        else:
+            _wm = interaction.guild.get_member(int(winner_id))
+            _lm = interaction.guild.get_member(int(loser_id))
+            if _wm:
+                await assign_ranked_tier_role(interaction.guild, _wm, new_winner_elo)
+            if _lm:
+                await assign_ranked_tier_role(interaction.guild, _lm, new_loser_elo)
 
         if not is_draw:
             await check_and_award_challenge_roles(interaction.guild, winner_id, loser_id, winner_goals, loser_goals, new_winner_streak)
@@ -3191,6 +3242,33 @@ async def rankedcheckchallenges(interaction: discord.Interaction):
         lines.append(f"\n⚪ **Al hadden de rol ({len(already_had)}):**")
         lines += [f"  • {x}" for x in already_had]
 
+    await interaction.followup.send("\n".join(lines), ephemeral=True)
+
+
+@tree.command(name="rankedsynctierroles", description="Sync tier roles (Bronze/Silver/…) for all ranked players (admin only)")
+@is_admin()
+async def rankedsynctierroles(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT name, elo FROM ranked_players")
+    players = c.fetchall()
+    conn.close()
+
+    updated, skipped = [], []
+    for p in players:
+        member = interaction.guild.get_member(int(p["name"]))
+        if not member:
+            skipped.append(p["name"])
+            continue
+        await assign_ranked_tier_role(interaction.guild, member, p["elo"])
+        tier = get_ranked_rank(p["elo"])
+        updated.append(f"{member.display_name} → {tier}")
+
+    lines = [f"✅ **Tier rollen gesyncet voor {len(updated)} spelers**"]
+    lines += [f"  • {x}" for x in updated]
+    if skipped:
+        lines.append(f"\n⚠️ Niet gevonden ({len(skipped)}): {', '.join(skipped)}")
     await interaction.followup.send("\n".join(lines), ephemeral=True)
 
 
