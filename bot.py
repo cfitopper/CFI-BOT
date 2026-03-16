@@ -3194,4 +3194,50 @@ async def rankedcheckchallenges(interaction: discord.Interaction):
     await interaction.followup.send("\n".join(lines), ephemeral=True)
 
 
+@tree.command(name="rankedphenomenonmatches", description="Toon welke wedstrijden de Phenomenon rol hebben getriggerd (admin only)")
+async def rankedphenomenonmatches(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    if not any(r.name in ADMIN_ROLES for r in interaction.user.roles):
+        await interaction.followup.send("❌ No permission.", ephemeral=True)
+        return
+
+    conn = get_db()
+    c = conn.cursor()
+
+    c.execute("SELECT name FROM ranked_players ORDER BY elo DESC, name ASC LIMIT 10")
+    leaderboard_set = {row["name"] for row in c.fetchall()}
+
+    if not leaderboard_set:
+        conn.close()
+        await interaction.followup.send("Geen leaderboard spelers gevonden.", ephemeral=True)
+        return
+
+    placeholders = ",".join(["%s"] * len(leaderboard_set))
+    c.execute(f"""
+        SELECT player1 AS scorer, player2 AS opponent, score1 AS scored, score2 AS conceded, date
+        FROM ranked_matches WHERE score1 >= 7 AND player2 IN ({placeholders})
+        UNION ALL
+        SELECT player2, player1, score2, score1, date
+        FROM ranked_matches WHERE score2 >= 7 AND player1 IN ({placeholders})
+        ORDER BY date DESC
+    """, (*leaderboard_set, *leaderboard_set))
+    rows = c.fetchall()
+    conn.close()
+
+    if not rows:
+        await interaction.followup.send("Geen Phenomenon-waardige wedstrijden gevonden.", ephemeral=True)
+        return
+
+    lines = ["**⚡ Phenomenon-triggerende wedstrijden** (7+ goals vs leaderboard)\n"]
+    for row in rows:
+        scorer_member = interaction.guild.get_member(int(row["scorer"]))
+        opp_member = interaction.guild.get_member(int(row["opponent"]))
+        scorer_name = scorer_member.display_name if scorer_member else row["scorer"]
+        opp_name = opp_member.display_name if opp_member else row["opponent"]
+        date_str = str(row["date"])[:10]
+        lines.append(f"• **{scorer_name}** scoorde **{row['scored']}** goals vs {opp_name} ({row['scored']}-{row['conceded']}) — {date_str}")
+
+    await interaction.followup.send("\n".join(lines), ephemeral=True)
+
+
 bot.run(BOT_TOKEN)
