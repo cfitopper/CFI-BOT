@@ -1720,6 +1720,29 @@ def log_matchmaking(conn, player_id, action, legs=None, opponent_id=None):
     """, (player_id, action, legs, opponent_id))
     conn.commit()
 
+def _calc_coins_from_db(c, pid):
+    """Calculate total coins earned for a player from their full ranked_matches history."""
+    c.execute("""
+        SELECT player1, player2, score1, score2
+        FROM ranked_matches WHERE player1 = %s OR player2 = %s ORDER BY id ASC
+    """, (pid, pid))
+    matches = [dict(m) for m in c.fetchall()]
+    total = 0
+    streak = 0
+    for m in matches:
+        s1, s2 = m["score1"], m["score2"]
+        total += 1  # +1 for playing
+        if s1 == s2:
+            streak = 0  # draw resets streak
+        elif (m["player1"] == pid and s1 > s2) or (m["player2"] == pid and s2 > s1):
+            total += 3  # +3 for win
+            streak += 1
+            if streak >= 2:
+                total += streak  # streak bonus: +N coins on N-win streak
+        else:
+            streak = 0  # loss resets streak
+    return total
+
 def _calc_streaks_from_db(c, pid):
     """Calculate (current_winstreak, max_winstreak) for a player from ranked_matches."""
     c.execute("""
@@ -1811,6 +1834,17 @@ def setup_ranked_db(conn):
                      current_winstreak = %s, max_winstreak = %s WHERE name = %s""",
                   (row["gf"], row["ga"], curr_ws, max_ws, pid))
     conn.commit()
+
+    # One-time retroactive coin backfill for existing players.
+    # Only runs when ALL players still have 0 coins (= right after the coins column was added).
+    # After the first run, manual coin adjustments by mods are preserved across restarts.
+    c.execute("SELECT COALESCE(MAX(coins), 0) AS max_coins FROM ranked_players")
+    if (c.fetchone()["max_coins"] or 0) == 0 and pids:
+        for pid in pids:
+            coins = _calc_coins_from_db(c, pid)
+            if coins > 0:
+                c.execute("UPDATE ranked_players SET coins = %s WHERE name = %s", (coins, pid))
+        conn.commit()
 
     conn.commit()
 
