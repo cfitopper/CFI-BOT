@@ -3265,11 +3265,23 @@ async def rankedsynctierroles(interaction: discord.Interaction):
         tier = get_ranked_rank(p["elo"])
         updated.append(f"{member.display_name} → {tier}")
 
-    lines = [f"✅ **Tier rollen gesyncet voor {len(updated)} spelers**"]
-    lines += [f"  • {x}" for x in updated]
+    summary = f"✅ **Tier rollen gesyncet voor {len(updated)} spelers**"
     if skipped:
-        lines.append(f"\n⚠️ Niet gevonden ({len(skipped)}): {', '.join(skipped)}")
-    await interaction.followup.send("\n".join(lines), ephemeral=True)
+        summary += f"\n⚠️ Niet gevonden ({len(skipped)}): {', '.join(skipped)}"
+
+    detail_lines = [f"  • {x}" for x in updated]
+    chunks = []
+    current = summary
+    for line in detail_lines:
+        if len(current) + len(line) + 1 > 1900:
+            chunks.append(current)
+            current = line
+        else:
+            current += "\n" + line
+    chunks.append(current)
+
+    for chunk in chunks:
+        await interaction.followup.send(chunk, ephemeral=True)
 
 
 @tree.command(name="rankedphenomenonmatches", description="Toon welke wedstrijden de Phenomenon rol hebben getriggerd (admin only)")
