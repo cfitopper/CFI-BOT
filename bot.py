@@ -2705,6 +2705,26 @@ async def rankedsetcoins(interaction: discord.Interaction, player: discord.Membe
     await interaction.response.send_message(f"🪙 Updated **{player.display_name}**'s coins to **{new_coins}**.", ephemeral=True)
 
 
+@tree.command(name="setcoins", description="Set a ranked player's coin balance (admin only)")
+@is_admin()
+@app_commands.describe(player="Select a player", coins="New coin balance")
+async def setcoins(interaction: discord.Interaction, player: discord.Member, coins: int):
+    uid = str(player.id)
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT coins FROM ranked_players WHERE name = %s", (uid,))
+    row = c.fetchone()
+    if not row:
+        conn.close()
+        await interaction.response.send_message(f"❌ **{player.display_name}** is not registered for Ranked!", ephemeral=True)
+        return
+    new_coins = max(0, coins)
+    c.execute("UPDATE ranked_players SET coins = %s WHERE name = %s", (new_coins, uid))
+    conn.commit()
+    conn.close()
+    await interaction.response.send_message(f"🪙 Updated **{player.display_name}**'s coins to **{new_coins}**.", ephemeral=True)
+
+
 # ── RANKED REACTION ROLE ──
 ranked_reaction_messages = set()
 
