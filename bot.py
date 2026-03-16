@@ -1731,15 +1731,16 @@ def _calc_coins_from_db(c, pid):
     streak = 0
     for m in matches:
         s1, s2 = m["score1"], m["score2"]
-        total += 1  # +1 for playing
         if s1 == s2:
+            total += 2  # +2 for draw
             streak = 0  # draw resets streak
         elif (m["player1"] == pid and s1 > s2) or (m["player2"] == pid and s2 > s1):
-            total += 3  # +3 for win
+            total += 1 + 3  # +1 played + +3 win
             streak += 1
             if streak >= 2:
                 total += streak  # streak bonus: +N coins on N-win streak
         else:
+            total += 1  # +1 for loss (played)
             streak = 0  # loss resets streak
     return total
 
@@ -2077,11 +2078,11 @@ async def rankedmatchscore(interaction: discord.Interaction, player1: discord.Me
     c = conn.cursor()
     if is_draw:
         new_p1_elo, new_p2_elo, change_1, change_2 = calc_elo_draw(p1_data["elo"], p2_data["elo"])
-        draw_coins = 1
-        c.execute("""UPDATE ranked_players SET elo = %s, draws = draws + 1, coins = coins + 1,
+        draw_coins = 2
+        c.execute("""UPDATE ranked_players SET elo = %s, draws = draws + 1, coins = coins + 2,
                      goals_for = goals_for + %s, goals_against = goals_against + %s,
                      current_winstreak = 0 WHERE name = %s""", (new_p1_elo, s1, s2, p1_id))
-        c.execute("""UPDATE ranked_players SET elo = %s, draws = draws + 1, coins = coins + 1,
+        c.execute("""UPDATE ranked_players SET elo = %s, draws = draws + 1, coins = coins + 2,
                      goals_for = goals_for + %s, goals_against = goals_against + %s,
                      current_winstreak = 0 WHERE name = %s""", (new_p2_elo, s2, s1, p2_id))
         c.execute("INSERT INTO ranked_matches (player1, player2, score1, score2, elo_change, date) VALUES (%s, %s, %s, %s, %s, %s)",
@@ -2398,11 +2399,11 @@ async def on_interaction(interaction: discord.Interaction):
 
         if is_draw:
             new_p1_elo, new_p2_elo, change_1, change_2 = calc_elo_draw(p1_data["elo"], p2_data["elo"])
-            draw_coins = 1
-            c.execute("""UPDATE ranked_players SET elo = %s, draws = draws + 1, coins = coins + 1,
+            draw_coins = 2
+            c.execute("""UPDATE ranked_players SET elo = %s, draws = draws + 1, coins = coins + 2,
                          goals_for = goals_for + %s, goals_against = goals_against + %s,
                          current_winstreak = 0 WHERE name = %s""", (new_p1_elo, s1, s2, p1_id))
-            c.execute("""UPDATE ranked_players SET elo = %s, draws = draws + 1, coins = coins + 1,
+            c.execute("""UPDATE ranked_players SET elo = %s, draws = draws + 1, coins = coins + 2,
                          goals_for = goals_for + %s, goals_against = goals_against + %s,
                          current_winstreak = 0 WHERE name = %s""", (new_p2_elo, s2, s1, p2_id))
             c.execute("""
