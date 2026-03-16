@@ -1781,12 +1781,13 @@ def setup_ranked_db(conn):
     except Exception:
         conn.rollback()
 
-    # Migration: add winstreak and goals columns
+    # Migration: add winstreak, goals, and coins columns
     for col, defn in [
         ("current_winstreak", "INTEGER DEFAULT 0"),
         ("max_winstreak", "INTEGER DEFAULT 0"),
         ("goals_for", "INTEGER DEFAULT 0"),
         ("goals_against", "INTEGER DEFAULT 0"),
+        ("coins", "INTEGER DEFAULT 0"),
     ]:
         try:
             c.execute(f"ALTER TABLE ranked_players ADD COLUMN {col} {defn}")
@@ -1861,6 +1862,7 @@ async def rankedprofile(interaction: discord.Interaction, player: discord.Member
     ga = p.get("goals_against", 0) or 0
     curr_ws = p.get("current_winstreak", 0) or 0
     max_ws = p.get("max_winstreak", 0) or 0
+    coins = p.get("coins", 0) or 0
 
     embed = discord.Embed(title=f"⚽ {target.display_name}", color=0xffaa00)
     embed.set_thumbnail(url=target.display_avatar.url)
@@ -1875,7 +1877,8 @@ async def rankedprofile(interaction: discord.Interaction, player: discord.Member
         f"**Winrate:** {winrate}%\n"
         f"**Goals:** {gf} scored / {ga} conceded\n"
         f"**Current Winstreak:** 🔥 {curr_ws}\n"
-        f"**Best Winstreak:** ⭐ {max_ws}"
+        f"**Best Winstreak:** ⭐ {max_ws}\n"
+        f"**Coins:** 🪙 {coins}"
     )
     await interaction.followup.send(embed=embed)
 
@@ -2042,10 +2045,11 @@ async def rankedmatchscore(interaction: discord.Interaction, player1: discord.Me
     c = conn.cursor()
     if is_draw:
         new_p1_elo, new_p2_elo, change_1, change_2 = calc_elo_draw(p1_data["elo"], p2_data["elo"])
-        c.execute("""UPDATE ranked_players SET elo = %s, draws = draws + 1,
+        draw_coins = 1
+        c.execute("""UPDATE ranked_players SET elo = %s, draws = draws + 1, coins = coins + 1,
                      goals_for = goals_for + %s, goals_against = goals_against + %s,
                      current_winstreak = 0 WHERE name = %s""", (new_p1_elo, s1, s2, p1_id))
-        c.execute("""UPDATE ranked_players SET elo = %s, draws = draws + 1,
+        c.execute("""UPDATE ranked_players SET elo = %s, draws = draws + 1, coins = coins + 1,
                      goals_for = goals_for + %s, goals_against = goals_against + %s,
                      current_winstreak = 0 WHERE name = %s""", (new_p2_elo, s2, s1, p2_id))
         c.execute("INSERT INTO ranked_matches (player1, player2, score1, score2, elo_change, date) VALUES (%s, %s, %s, %s, %s, %s)",
@@ -2058,12 +2062,15 @@ async def rankedmatchscore(interaction: discord.Interaction, player1: discord.Me
         winner_goals = s1 if s1 > s2 else s2
         loser_goals  = s2 if s1 > s2 else s1
         new_winner_elo, new_loser_elo, gain, loss = calc_elo(winner_data["elo"], loser_data["elo"])
-        c.execute("""UPDATE ranked_players SET elo = %s, wins = wins + 1,
+        new_winner_streak = winner_data.get("current_winstreak", 0) + 1
+        streak_coins = new_winner_streak if new_winner_streak >= 2 else 0
+        winner_coins = 1 + 3 + streak_coins  # played + win + streak bonus
+        c.execute("""UPDATE ranked_players SET elo = %s, wins = wins + 1, coins = coins + %s,
                      goals_for = goals_for + %s, goals_against = goals_against + %s,
                      current_winstreak = current_winstreak + 1,
                      max_winstreak = GREATEST(max_winstreak, current_winstreak + 1)
-                     WHERE name = %s""", (new_winner_elo, winner_goals, loser_goals, winner_id))
-        c.execute("""UPDATE ranked_players SET elo = %s, losses = losses + 1,
+                     WHERE name = %s""", (new_winner_elo, winner_coins, winner_goals, loser_goals, winner_id))
+        c.execute("""UPDATE ranked_players SET elo = %s, losses = losses + 1, coins = coins + 1,
                      goals_for = goals_for + %s, goals_against = goals_against + %s,
                      current_winstreak = 0 WHERE name = %s""", (new_loser_elo, loser_goals, winner_goals, loser_id))
         c.execute("INSERT INTO ranked_matches (player1, player2, score1, score2, elo_change, date) VALUES (%s, %s, %s, %s, %s, %s)",
@@ -2099,9 +2106,9 @@ async def rankedmatchscore(interaction: discord.Interaction, player1: discord.Me
         embed.description = (
             f"<@{p1_id}> **{s1} - {s2}** <@{p2_id}>\n\n"
             f"**{p1_name}**\n"
-            f"**Elo:** {new_p1_elo} pts ({p1_rank}) `+{change_1}`\n\n"
+            f"**Elo:** {new_p1_elo} pts ({p1_rank}) `+{change_1}` | 🪙 +{draw_coins}\n\n"
             f"**{p2_name}**\n"
-            f"**Elo:** {new_p2_elo} pts ({p2_rank}) `+{change_2}`"
+            f"**Elo:** {new_p2_elo} pts ({p2_rank}) `+{change_2}` | 🪙 +{draw_coins}"
         )
         embed.set_footer(text=f"Submitted by {interaction.user.display_name}")
     else:
@@ -2130,12 +2137,13 @@ async def rankedmatchscore(interaction: discord.Interaction, player1: discord.Me
             print(f"Banner generation error: {e}")
 
         embed = discord.Embed(title="✅ Ranked Score Confirmed!", color=0x00ff88)
+        streak_bonus_text = f" *(+{streak_coins} streak 🔥)*" if streak_coins > 0 else ""
         embed.description = (
             f"<@{winner_id}> **{max(s1,s2)} - {min(s1,s2)}** <@{loser_id}>\n\n"
             f"🏆 **{winner_name}** wins!\n"
-            f"**Elo:** {new_winner_elo} pts ({winner_rank}) `+{gain}`\n\n"
+            f"**Elo:** {new_winner_elo} pts ({winner_rank}) `+{gain}` | 🪙 +{winner_coins}{streak_bonus_text}\n\n"
             f"**{loser_name}**\n"
-            f"**Elo:** {new_loser_elo} pts ({loser_rank}) `-{loss}`"
+            f"**Elo:** {new_loser_elo} pts ({loser_rank}) `-{loss}` | 🪙 +1"
         )
         embed.set_footer(text=f"Submitted by {interaction.user.display_name}")
 
@@ -2358,10 +2366,11 @@ async def on_interaction(interaction: discord.Interaction):
 
         if is_draw:
             new_p1_elo, new_p2_elo, change_1, change_2 = calc_elo_draw(p1_data["elo"], p2_data["elo"])
-            c.execute("""UPDATE ranked_players SET elo = %s, draws = draws + 1,
+            draw_coins = 1
+            c.execute("""UPDATE ranked_players SET elo = %s, draws = draws + 1, coins = coins + 1,
                          goals_for = goals_for + %s, goals_against = goals_against + %s,
                          current_winstreak = 0 WHERE name = %s""", (new_p1_elo, s1, s2, p1_id))
-            c.execute("""UPDATE ranked_players SET elo = %s, draws = draws + 1,
+            c.execute("""UPDATE ranked_players SET elo = %s, draws = draws + 1, coins = coins + 1,
                          goals_for = goals_for + %s, goals_against = goals_against + %s,
                          current_winstreak = 0 WHERE name = %s""", (new_p2_elo, s2, s1, p2_id))
             c.execute("""
@@ -2376,12 +2385,15 @@ async def on_interaction(interaction: discord.Interaction):
             winner_goals = s1 if s1 > s2 else s2
             loser_goals  = s2 if s1 > s2 else s1
             new_winner_elo, new_loser_elo, gain, loss = calc_elo(winner_data["elo"], loser_data["elo"])
-            c.execute("""UPDATE ranked_players SET elo = %s, wins = wins + 1,
+            new_winner_streak = winner_data.get("current_winstreak", 0) + 1
+            streak_coins = new_winner_streak if new_winner_streak >= 2 else 0
+            winner_coins = 1 + 3 + streak_coins  # played + win + streak bonus
+            c.execute("""UPDATE ranked_players SET elo = %s, wins = wins + 1, coins = coins + %s,
                          goals_for = goals_for + %s, goals_against = goals_against + %s,
                          current_winstreak = current_winstreak + 1,
                          max_winstreak = GREATEST(max_winstreak, current_winstreak + 1)
-                         WHERE name = %s""", (new_winner_elo, winner_goals, loser_goals, winner_id))
-            c.execute("""UPDATE ranked_players SET elo = %s, losses = losses + 1,
+                         WHERE name = %s""", (new_winner_elo, winner_coins, winner_goals, loser_goals, winner_id))
+            c.execute("""UPDATE ranked_players SET elo = %s, losses = losses + 1, coins = coins + 1,
                          goals_for = goals_for + %s, goals_against = goals_against + %s,
                          current_winstreak = 0 WHERE name = %s""", (new_loser_elo, loser_goals, winner_goals, loser_id))
             c.execute("""
@@ -2422,9 +2434,9 @@ async def on_interaction(interaction: discord.Interaction):
             embed.description = (
                 f"<@{p1_id}> **{s1} - {s2}** <@{p2_id}>\n\n"
                 f"**{p1_name}**\n"
-                f"**Elo:** {new_p1_elo} pts ({p1_rank}) `{'+' if change_1 >= 0 else ''}{change_1}`\n\n"
+                f"**Elo:** {new_p1_elo} pts ({p1_rank}) `{'+' if change_1 >= 0 else ''}{change_1}` | 🪙 +{draw_coins}\n\n"
                 f"**{p2_name}**\n"
-                f"**Elo:** {new_p2_elo} pts ({p2_rank}) `{'+' if change_2 >= 0 else ''}{change_2}`"
+                f"**Elo:** {new_p2_elo} pts ({p2_rank}) `{'+' if change_2 >= 0 else ''}{change_2}` | 🪙 +{draw_coins}"
             )
         else:
             winner_member = interaction.guild.get_member(int(winner_id))
@@ -2452,12 +2464,13 @@ async def on_interaction(interaction: discord.Interaction):
                 print(f"Banner generation error: {e}")
 
             embed = discord.Embed(title="✅ Ranked Score Confirmed!", color=0x00ff88)
+            streak_bonus_text = f" *(+{streak_coins} streak 🔥)*" if streak_coins > 0 else ""
             embed.description = (
                 f"<@{winner_id}> **{max(s1,s2)} - {min(s1,s2)}** <@{loser_id}>\n\n"
                 f"🏆 **{winner_name}** wins!\n"
-                f"**Elo:** {new_winner_elo} pts ({winner_rank}) `+{gain}`\n\n"
+                f"**Elo:** {new_winner_elo} pts ({winner_rank}) `+{gain}` | 🪙 +{winner_coins}{streak_bonus_text}\n\n"
                 f"**{loser_name}**\n"
-                f"**Elo:** {new_loser_elo} pts ({loser_rank}) `-{loss}`"
+                f"**Elo:** {new_loser_elo} pts ({loser_rank}) `-{loss}` | 🪙 +1"
             )
 
         if banner_file:
@@ -2638,6 +2651,25 @@ async def rankedsetstats(interaction: discord.Interaction, player: discord.Membe
     conn.close()
     await interaction.response.send_message(f"✅ Updated **{player.display_name}**: {' | '.join(changed)}")
 
+
+@tree.command(name="rankedsetcoins", description="Set a player's coin balance (admin only)")
+@is_admin()
+@app_commands.describe(player="Select a player", coins="New coin balance")
+async def rankedsetcoins(interaction: discord.Interaction, player: discord.Member, coins: int):
+    uid = str(player.id)
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT coins FROM ranked_players WHERE name = %s", (uid,))
+    row = c.fetchone()
+    if not row:
+        conn.close()
+        await interaction.response.send_message(f"❌ **{player.display_name}** is not registered for Ranked!", ephemeral=True)
+        return
+    new_coins = max(0, coins)
+    c.execute("UPDATE ranked_players SET coins = %s WHERE name = %s", (new_coins, uid))
+    conn.commit()
+    conn.close()
+    await interaction.response.send_message(f"🪙 Updated **{player.display_name}**'s coins to **{new_coins}**.", ephemeral=True)
 
 
 # ── RANKED REACTION ROLE ──
