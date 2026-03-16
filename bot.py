@@ -3089,4 +3089,109 @@ async def rankedleaderboardsetup(interaction: discord.Interaction):
     await interaction.followup.send("✅ Leaderboard gepost en wordt elk uur geupdate!", ephemeral=True)
 
 
+@tree.command(name="rankedcheckchallenges", description="Check alle spelers en ken verdiende challenge rollen toe (admin only)")
+async def rankedcheckchallenges(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    if not any(r.name in ADMIN_ROLES for r in interaction.user.roles):
+        await interaction.followup.send("❌ No permission.", ephemeral=True)
+        return
+
+    guild = interaction.guild
+    conn = get_db()
+    c = conn.cursor()
+
+    # Top-10 leaderboard IDs
+    c.execute("SELECT name FROM ranked_players ORDER BY elo DESC, name ASC LIMIT 10")
+    leaderboard_ids = {row["name"] for row in c.fetchall()}
+
+    # All players
+    c.execute("SELECT * FROM ranked_players")
+    all_players = [dict(r) for r in c.fetchall()]
+
+    # Precompute Invulnerable: clean-sheet wins vs leaderboard per player
+    invulnerable_players = set()
+    if leaderboard_ids:
+        placeholders = ",".join(["%s"] * len(leaderboard_ids))
+        for p in all_players:
+            pid = p["name"]
+            c.execute(f"""
+                SELECT COUNT(*) AS cnt FROM ranked_matches
+                WHERE (
+                    (player1 = %s AND score1 > score2 AND score2 = 0 AND player2 IN ({placeholders}))
+                    OR
+                    (player2 = %s AND score2 > score1 AND score1 = 0 AND player1 IN ({placeholders}))
+                )
+            """, (pid, *leaderboard_ids, pid, *leaderboard_ids))
+            row_inv = c.fetchone()
+            if row_inv and (row_inv["cnt"] or 0) >= 3:
+                invulnerable_players.add(pid)
+
+    # Phenomenon: scored 7+ goals in any single match vs a leaderboard player
+    phenomenon_players = set()
+    if leaderboard_ids:
+        placeholders = ",".join(["%s"] * len(leaderboard_ids))
+        c.execute(f"""
+            SELECT player1 AS scorer, player2 AS opponent, score1 AS goals
+            FROM ranked_matches WHERE score1 >= 7 AND player2 IN ({placeholders})
+            UNION ALL
+            SELECT player2 AS scorer, player1 AS opponent, score2 AS goals
+            FROM ranked_matches WHERE score2 >= 7 AND player1 IN ({placeholders})
+        """, (*leaderboard_ids, *leaderboard_ids))
+        for row in c.fetchall():
+            phenomenon_players.add(row["scorer"])
+
+    conn.close()
+
+    CHALLENGE_ROLES = ["Victorious", "God striker", "Phenomenon", "Invulnerable"]
+    awarded = []
+    already_had = []
+    report_lines = []
+
+    for p in all_players:
+        pid = p["name"]
+        member = guild.get_member(int(pid))
+        if not member:
+            continue
+
+        total = (p.get("wins", 0) or 0) + (p.get("losses", 0) or 0) + (p.get("draws", 0) or 0)
+        gf = p.get("goals_for", 0) or 0
+        max_ws = p.get("max_winstreak", 0) or 0
+
+        earned = []
+        if max_ws >= 10:
+            earned.append("Victorious")
+        if gf >= 200 and total >= 40:
+            earned.append("God striker")
+        if pid in phenomenon_players:
+            earned.append("Phenomenon")
+        if pid in invulnerable_players:
+            earned.append("Invulnerable")
+
+        for role_name in earned:
+            role = discord.utils.get(guild.roles, name=role_name)
+            if not role:
+                continue
+            if role in member.roles:
+                already_had.append(f"{member.display_name} → {role_name}")
+            else:
+                try:
+                    await member.add_roles(role)
+                    awarded.append(f"{member.display_name} → {role_name}")
+                    print(f"🏅 Retroactively awarded '{role_name}' to {member.display_name}")
+                except Exception as e:
+                    print(f"❌ Could not award '{role_name}' to {member.display_name}: {e}")
+
+    lines = ["**🏅 Challenge Rol Check Resultaat**\n"]
+    if awarded:
+        lines.append(f"✅ **Nieuw toegekend ({len(awarded)}):**")
+        lines += [f"  • {x}" for x in awarded]
+    else:
+        lines.append("✅ Geen nieuwe rollen toe te kennen.")
+    if already_had:
+        lines.append(f"\n⚪ **Al hadden de rol ({len(already_had)}):**")
+        lines += [f"  • {x}" for x in already_had]
+
+    await interaction.followup.send("\n".join(lines), ephemeral=True)
+
+
 bot.run(BOT_TOKEN)
