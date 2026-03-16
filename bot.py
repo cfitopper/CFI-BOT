@@ -2575,9 +2575,11 @@ async def on_interaction(interaction: discord.Interaction):
     losses="New loss count",
     draws="New draw count",
     current_winstreak="New current winstreak",
-    max_winstreak="New best winstreak"
+    max_winstreak="New best winstreak",
+    goals_for="New goals scored",
+    goals_against="New goals conceded"
 )
-async def rankedsetstats(interaction: discord.Interaction, player: discord.Member, elo: int = None, wins: int = None, losses: int = None, draws: int = None, current_winstreak: int = None, max_winstreak: int = None):
+async def rankedsetstats(interaction: discord.Interaction, player: discord.Member, elo: int = None, wins: int = None, losses: int = None, draws: int = None, current_winstreak: int = None, max_winstreak: int = None, goals_for: int = None, goals_against: int = None):
     uid = str(player.id)
     conn = get_db()
     c = conn.cursor()
@@ -2616,6 +2618,14 @@ async def rankedsetstats(interaction: discord.Interaction, player: discord.Membe
         updates.append("max_winstreak = %s")
         values.append(max(0, max_winstreak))
         changed.append(f"Best Winstreak: {max(0, max_winstreak)}")
+    if goals_for is not None:
+        updates.append("goals_for = %s")
+        values.append(max(0, goals_for))
+        changed.append(f"Goals Scored: {max(0, goals_for)}")
+    if goals_against is not None:
+        updates.append("goals_against = %s")
+        values.append(max(0, goals_against))
+        changed.append(f"Goals Conceded: {max(0, goals_against)}")
 
     if not updates:
         conn.close()
