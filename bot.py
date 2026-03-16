@@ -1782,7 +1782,6 @@ def setup_ranked_db(conn):
         conn.rollback()
 
     # Migration: add winstreak and goals columns
-    new_cols = []
     for col, defn in [
         ("current_winstreak", "INTEGER DEFAULT 0"),
         ("max_winstreak", "INTEGER DEFAULT 0"),
@@ -1792,35 +1791,25 @@ def setup_ranked_db(conn):
         try:
             c.execute(f"ALTER TABLE ranked_players ADD COLUMN {col} {defn}")
             conn.commit()
-            new_cols.append(col)
         except Exception:
             conn.rollback()
 
-    # Backfill goals from existing matches if columns were just added
-    if "goals_for" in new_cols or "goals_against" in new_cols:
-        c.execute("SELECT name FROM ranked_players")
-        pids = [r["name"] for r in c.fetchall()]
-        for pid in pids:
-            c.execute("""
-                SELECT
-                    COALESCE(SUM(CASE WHEN player1 = %s THEN score1 WHEN player2 = %s THEN score2 ELSE 0 END), 0) AS gf,
-                    COALESCE(SUM(CASE WHEN player1 = %s THEN score2 WHEN player2 = %s THEN score1 ELSE 0 END), 0) AS ga
-                FROM ranked_matches WHERE player1 = %s OR player2 = %s
-            """, (pid, pid, pid, pid, pid, pid))
-            row = dict(c.fetchone())
-            c.execute("UPDATE ranked_players SET goals_for = %s, goals_against = %s WHERE name = %s",
-                      (row["gf"], row["ga"], pid))
-        conn.commit()
-
-    # Backfill winstreaks from existing matches if columns were just added
-    if "current_winstreak" in new_cols or "max_winstreak" in new_cols:
-        c.execute("SELECT name FROM ranked_players")
-        pids = [r["name"] for r in c.fetchall()]
-        for pid in pids:
-            curr_ws, max_ws = _calc_streaks_from_db(c, pid)
-            c.execute("UPDATE ranked_players SET current_winstreak = %s, max_winstreak = %s WHERE name = %s",
-                      (curr_ws, max_ws, pid))
-        conn.commit()
+    # Always recalculate goals and streaks from ranked_matches to keep data clean
+    c.execute("SELECT name FROM ranked_players")
+    pids = [r["name"] for r in c.fetchall()]
+    for pid in pids:
+        c.execute("""
+            SELECT
+                COALESCE(SUM(CASE WHEN player1 = %s THEN score1 WHEN player2 = %s THEN score2 ELSE 0 END), 0) AS gf,
+                COALESCE(SUM(CASE WHEN player1 = %s THEN score2 WHEN player2 = %s THEN score1 ELSE 0 END), 0) AS ga
+            FROM ranked_matches WHERE player1 = %s OR player2 = %s
+        """, (pid, pid, pid, pid, pid, pid))
+        row = dict(c.fetchone())
+        curr_ws, max_ws = _calc_streaks_from_db(c, pid)
+        c.execute("""UPDATE ranked_players SET goals_for = %s, goals_against = %s,
+                     current_winstreak = %s, max_winstreak = %s WHERE name = %s""",
+                  (row["gf"], row["ga"], curr_ws, max_ws, pid))
+    conn.commit()
 
     conn.commit()
 
