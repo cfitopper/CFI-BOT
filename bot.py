@@ -1688,8 +1688,12 @@ def get_rank_display(elo):
 TIER_ROLE_NAMES = [r["name"] for r in RANKED_RANKS]
 
 async def assign_ranked_tier_role(guild, member, new_elo):
-    """Remove old tier roles and assign the correct one based on new ELO."""
+    """Remove old tier roles and assign the correct one based on new ELO.
+    Only assigns if the member has the CFI - Ranked role."""
     try:
+        cfi_ranked_role = discord.utils.get(guild.roles, name="CFI - Ranked")
+        if not cfi_ranked_role or cfi_ranked_role not in member.roles:
+            return
         new_tier = get_ranked_rank(new_elo)
         for tier_name in TIER_ROLE_NAMES:
             role = discord.utils.get(guild.roles, name=tier_name)
@@ -3183,6 +3187,20 @@ async def rankedsynctierroles(interaction: discord.Interaction):
     players = c.fetchall()
     conn.close()
 
+    cfi_ranked_role = discord.utils.get(interaction.guild.roles, name="CFI - Ranked")
+    ranked_player_ids = {p["name"] for p in players}
+
+    # Strip tier roles from members who don't have CFI - Ranked
+    stripped = []
+    if cfi_ranked_role:
+        for member in interaction.guild.members:
+            if cfi_ranked_role not in member.roles:
+                for tier_name in TIER_ROLE_NAMES:
+                    role = discord.utils.get(interaction.guild.roles, name=tier_name)
+                    if role and role in member.roles:
+                        await member.remove_roles(role)
+                        stripped.append(member.display_name)
+
     updated, skipped = [], []
     for p in players:
         member = interaction.guild.get_member(int(p["name"]))
@@ -3190,10 +3208,14 @@ async def rankedsynctierroles(interaction: discord.Interaction):
             skipped.append(p["name"])
             continue
         await assign_ranked_tier_role(interaction.guild, member, p["elo"])
-        tier = get_ranked_rank(p["elo"])
-        updated.append(f"{member.display_name} → {tier}")
+        cfi_ranked_role_check = discord.utils.get(interaction.guild.roles, name="CFI - Ranked")
+        if cfi_ranked_role_check and cfi_ranked_role_check in member.roles:
+            tier = get_ranked_rank(p["elo"])
+            updated.append(f"{member.display_name} → {tier}")
 
     summary = f"✅ **Tier rollen gesyncet voor {len(updated)} spelers**"
+    if stripped:
+        summary += f"\n🧹 Tier rol verwijderd bij {len(stripped)} niet-ranked leden"
     if skipped:
         summary += f"\n⚠️ Niet gevonden ({len(skipped)}): {', '.join(skipped)}"
 
