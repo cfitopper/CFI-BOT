@@ -1828,13 +1828,15 @@ def setup_ranked_db(conn):
     except Exception:
         conn.rollback()
 
-    # Migration: add winstreak, goals, and coins columns
+    # Migration: add winstreak, goals, coins, losestreak, and count_stats columns
     for col, defn in [
         ("current_winstreak", "INTEGER DEFAULT 0"),
         ("max_winstreak", "INTEGER DEFAULT 0"),
         ("goals_for", "INTEGER DEFAULT 0"),
         ("goals_against", "INTEGER DEFAULT 0"),
         ("coins", "INTEGER DEFAULT 0"),
+        ("current_losestreak", "INTEGER DEFAULT 0"),
+        ("count_stats", "BOOLEAN DEFAULT TRUE"),
     ]:
         try:
             c.execute(f"ALTER TABLE ranked_players ADD COLUMN {col} {defn}")
@@ -2097,42 +2099,79 @@ async def rankedmatchscore(interaction: discord.Interaction, player1: discord.Me
     s1, s2 = goals_player1, goals_player2
     is_draw = s1 == s2
 
+    # Check if stats should be blocked
+    p1_no_stats = not p1_data.get("count_stats", True)
+    p2_no_stats = not p2_data.get("count_stats", True)
+    p1_losestreak = p1_data.get("current_losestreak", 0) or 0
+    p2_losestreak = p2_data.get("current_losestreak", 0) or 0
+    stats_blocked = p1_no_stats or p2_no_stats or p1_losestreak >= 10 or p2_losestreak >= 10
+
+    blocked_reason = None
+    if p1_no_stats or p2_no_stats:
+        blocked_name = []
+        if p1_no_stats:
+            blocked_name.append(player1.display_name)
+        if p2_no_stats:
+            blocked_name.append(player2.display_name)
+        blocked_reason = f"Stats tellen niet: **{', '.join(blocked_name)}** heeft stats uitgeschakeld."
+    elif p1_losestreak >= 10 or p2_losestreak >= 10:
+        streaker_name = []
+        if p1_losestreak >= 10:
+            streaker_name.append(player1.display_name)
+        if p2_losestreak >= 10:
+            streaker_name.append(player2.display_name)
+        blocked_reason = f"Stats tellen niet: **{', '.join(streaker_name)}** heeft een lose streak van 10+."
+
     conn = get_db()
     c = conn.cursor()
-    if is_draw:
-        new_p1_elo, new_p2_elo, change_1, change_2 = calc_elo_draw(p1_data["elo"], p2_data["elo"])
-        draw_coins = 2
-        c.execute("""UPDATE ranked_players SET elo = %s, draws = draws + 1, coins = coins + 2,
-                     goals_for = goals_for + %s, goals_against = goals_against + %s,
-                     current_winstreak = 0 WHERE name = %s""", (new_p1_elo, s1, s2, p1_id))
-        c.execute("""UPDATE ranked_players SET elo = %s, draws = draws + 1, coins = coins + 2,
-                     goals_for = goals_for + %s, goals_against = goals_against + %s,
-                     current_winstreak = 0 WHERE name = %s""", (new_p2_elo, s2, s1, p2_id))
-        c.execute("INSERT INTO ranked_matches (player1, player2, score1, score2, elo_change, date) VALUES (%s, %s, %s, %s, %s, %s)",
-                  (p1_id, p2_id, s1, s2, 0, datetime.now().isoformat()))
-    else:
-        winner_id = p1_id if s1 > s2 else p2_id
-        loser_id  = p2_id if s1 > s2 else p1_id
-        winner_data = p1_data if s1 > s2 else p2_data
-        loser_data  = p2_data if s1 > s2 else p1_data
-        winner_goals = s1 if s1 > s2 else s2
-        loser_goals  = s2 if s1 > s2 else s1
-        new_winner_elo, new_loser_elo, gain, loss = calc_elo(winner_data["elo"], loser_data["elo"])
-        new_winner_streak = winner_data.get("current_winstreak", 0) + 1
-        streak_coins = new_winner_streak if new_winner_streak >= 2 else 0
-        winner_coins = 1 + 3 + streak_coins  # played + win + streak bonus
-        c.execute("""UPDATE ranked_players SET elo = %s, wins = wins + 1, coins = coins + %s,
-                     goals_for = goals_for + %s, goals_against = goals_against + %s,
-                     current_winstreak = current_winstreak + 1,
-                     max_winstreak = GREATEST(max_winstreak, current_winstreak + 1)
-                     WHERE name = %s""", (new_winner_elo, winner_coins, winner_goals, loser_goals, winner_id))
-        c.execute("""UPDATE ranked_players SET elo = %s, losses = losses + 1, coins = coins + 1,
-                     goals_for = goals_for + %s, goals_against = goals_against + %s,
-                     current_winstreak = 0 WHERE name = %s""", (new_loser_elo, loser_goals, winner_goals, loser_id))
-        c.execute("INSERT INTO ranked_matches (player1, player2, score1, score2, elo_change, date) VALUES (%s, %s, %s, %s, %s, %s)",
-                  (p1_id, p2_id, s1, s2, gain, datetime.now().isoformat()))
+    if not stats_blocked:
+        if is_draw:
+            new_p1_elo, new_p2_elo, change_1, change_2 = calc_elo_draw(p1_data["elo"], p2_data["elo"])
+            draw_coins = 2
+            c.execute("""UPDATE ranked_players SET elo = %s, draws = draws + 1, coins = coins + 2,
+                         goals_for = goals_for + %s, goals_against = goals_against + %s,
+                         current_winstreak = 0, current_losestreak = 0 WHERE name = %s""", (new_p1_elo, s1, s2, p1_id))
+            c.execute("""UPDATE ranked_players SET elo = %s, draws = draws + 1, coins = coins + 2,
+                         goals_for = goals_for + %s, goals_against = goals_against + %s,
+                         current_winstreak = 0, current_losestreak = 0 WHERE name = %s""", (new_p2_elo, s2, s1, p2_id))
+            c.execute("INSERT INTO ranked_matches (player1, player2, score1, score2, elo_change, date) VALUES (%s, %s, %s, %s, %s, %s)",
+                      (p1_id, p2_id, s1, s2, 0, datetime.now().isoformat()))
+        else:
+            winner_id = p1_id if s1 > s2 else p2_id
+            loser_id  = p2_id if s1 > s2 else p1_id
+            winner_data = p1_data if s1 > s2 else p2_data
+            loser_data  = p2_data if s1 > s2 else p1_data
+            winner_goals = s1 if s1 > s2 else s2
+            loser_goals  = s2 if s1 > s2 else s1
+            new_winner_elo, new_loser_elo, gain, loss = calc_elo(winner_data["elo"], loser_data["elo"])
+            new_winner_streak = winner_data.get("current_winstreak", 0) + 1
+            streak_coins = new_winner_streak if new_winner_streak >= 2 else 0
+            winner_coins = 1 + 3 + streak_coins  # played + win + streak bonus
+            c.execute("""UPDATE ranked_players SET elo = %s, wins = wins + 1, coins = coins + %s,
+                         goals_for = goals_for + %s, goals_against = goals_against + %s,
+                         current_winstreak = current_winstreak + 1,
+                         max_winstreak = GREATEST(max_winstreak, current_winstreak + 1),
+                         current_losestreak = 0
+                         WHERE name = %s""", (new_winner_elo, winner_coins, winner_goals, loser_goals, winner_id))
+            c.execute("""UPDATE ranked_players SET elo = %s, losses = losses + 1, coins = coins + 1,
+                         goals_for = goals_for + %s, goals_against = goals_against + %s,
+                         current_winstreak = 0,
+                         current_losestreak = current_losestreak + 1
+                         WHERE name = %s""", (new_loser_elo, loser_goals, winner_goals, loser_id))
+            c.execute("INSERT INTO ranked_matches (player1, player2, score1, score2, elo_change, date) VALUES (%s, %s, %s, %s, %s, %s)",
+                      (p1_id, p2_id, s1, s2, gain, datetime.now().isoformat()))
     conn.commit()
     conn.close()
+
+    if stats_blocked:
+        embed = discord.Embed(title="⚠️ Score ingevoerd — Geen stats geteld", color=0xFF6600)
+        embed.description = (
+            f"**{player1.display_name}** {s1} — {s2} **{player2.display_name}**\n\n"
+            f"⛔ {blocked_reason}\n"
+            f"De uitslag is ingevoerd maar er zijn geen punten, ELO of goals bijgehouden."
+        )
+        await interaction.followup.send(embed=embed)
+        return
 
     # Sync tier roles for both players
     p1_member = interaction.guild.get_member(int(p1_id))
@@ -2441,46 +2480,87 @@ async def on_interaction(interaction: discord.Interaction):
         c.execute("SELECT * FROM ranked_players WHERE name = %s", (p2_id,))
         p2_data = dict(c.fetchone())
 
-        if is_draw:
-            new_p1_elo, new_p2_elo, change_1, change_2 = calc_elo_draw(p1_data["elo"], p2_data["elo"])
-            draw_coins = 2
-            c.execute("""UPDATE ranked_players SET elo = %s, draws = draws + 1, coins = coins + 2,
-                         goals_for = goals_for + %s, goals_against = goals_against + %s,
-                         current_winstreak = 0 WHERE name = %s""", (new_p1_elo, s1, s2, p1_id))
-            c.execute("""UPDATE ranked_players SET elo = %s, draws = draws + 1, coins = coins + 2,
-                         goals_for = goals_for + %s, goals_against = goals_against + %s,
-                         current_winstreak = 0 WHERE name = %s""", (new_p2_elo, s2, s1, p2_id))
-            c.execute("""
-                INSERT INTO ranked_matches (player1, player2, score1, score2, elo_change, date)
-                VALUES (%s, %s, %s, %s, %s, %s)
-            """, (p1_id, p2_id, s1, s2, 0, datetime.now().isoformat()))
-        else:
-            winner_id = p1_id if s1 > s2 else p2_id
-            loser_id  = p2_id if s1 > s2 else p1_id
-            winner_data = p1_data if s1 > s2 else p2_data
-            loser_data  = p2_data if s1 > s2 else p1_data
-            winner_goals = s1 if s1 > s2 else s2
-            loser_goals  = s2 if s1 > s2 else s1
-            new_winner_elo, new_loser_elo, gain, loss = calc_elo(winner_data["elo"], loser_data["elo"])
-            new_winner_streak = winner_data.get("current_winstreak", 0) + 1
-            streak_coins = new_winner_streak if new_winner_streak >= 2 else 0
-            winner_coins = 1 + 3 + streak_coins  # played + win + streak bonus
-            c.execute("""UPDATE ranked_players SET elo = %s, wins = wins + 1, coins = coins + %s,
-                         goals_for = goals_for + %s, goals_against = goals_against + %s,
-                         current_winstreak = current_winstreak + 1,
-                         max_winstreak = GREATEST(max_winstreak, current_winstreak + 1)
-                         WHERE name = %s""", (new_winner_elo, winner_coins, winner_goals, loser_goals, winner_id))
-            c.execute("""UPDATE ranked_players SET elo = %s, losses = losses + 1, coins = coins + 1,
-                         goals_for = goals_for + %s, goals_against = goals_against + %s,
-                         current_winstreak = 0 WHERE name = %s""", (new_loser_elo, loser_goals, winner_goals, loser_id))
-            c.execute("""
-                INSERT INTO ranked_matches (player1, player2, score1, score2, elo_change, date)
-                VALUES (%s, %s, %s, %s, %s, %s)
-            """, (p1_id, p2_id, s1, s2, gain, datetime.now().isoformat()))
+        # Check if stats should be blocked
+        p1_no_stats = not p1_data.get("count_stats", True)
+        p2_no_stats = not p2_data.get("count_stats", True)
+        p1_losestreak = p1_data.get("current_losestreak", 0) or 0
+        p2_losestreak = p2_data.get("current_losestreak", 0) or 0
+        stats_blocked = p1_no_stats or p2_no_stats or p1_losestreak >= 10 or p2_losestreak >= 10
+
+        blocked_reason = None
+        if p1_no_stats or p2_no_stats:
+            blocked_name = []
+            if p1_no_stats:
+                blocked_name.append(interaction.guild.get_member(int(p1_id)).display_name if interaction.guild.get_member(int(p1_id)) else p1_id)
+            if p2_no_stats:
+                blocked_name.append(interaction.guild.get_member(int(p2_id)).display_name if interaction.guild.get_member(int(p2_id)) else p2_id)
+            blocked_reason = f"Stats tellen niet: **{', '.join(blocked_name)}** heeft stats uitgeschakeld."
+        elif p1_losestreak >= 10 or p2_losestreak >= 10:
+            streaker_name = []
+            if p1_losestreak >= 10:
+                streaker_name.append(interaction.guild.get_member(int(p1_id)).display_name if interaction.guild.get_member(int(p1_id)) else p1_id)
+            if p2_losestreak >= 10:
+                streaker_name.append(interaction.guild.get_member(int(p2_id)).display_name if interaction.guild.get_member(int(p2_id)) else p2_id)
+            blocked_reason = f"Stats tellen niet: **{', '.join(streaker_name)}** heeft een lose streak van 10+."
+
+        if not stats_blocked:
+            if is_draw:
+                new_p1_elo, new_p2_elo, change_1, change_2 = calc_elo_draw(p1_data["elo"], p2_data["elo"])
+                draw_coins = 2
+                c.execute("""UPDATE ranked_players SET elo = %s, draws = draws + 1, coins = coins + 2,
+                             goals_for = goals_for + %s, goals_against = goals_against + %s,
+                             current_winstreak = 0, current_losestreak = 0 WHERE name = %s""", (new_p1_elo, s1, s2, p1_id))
+                c.execute("""UPDATE ranked_players SET elo = %s, draws = draws + 1, coins = coins + 2,
+                             goals_for = goals_for + %s, goals_against = goals_against + %s,
+                             current_winstreak = 0, current_losestreak = 0 WHERE name = %s""", (new_p2_elo, s2, s1, p2_id))
+                c.execute("""
+                    INSERT INTO ranked_matches (player1, player2, score1, score2, elo_change, date)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                """, (p1_id, p2_id, s1, s2, 0, datetime.now().isoformat()))
+            else:
+                winner_id = p1_id if s1 > s2 else p2_id
+                loser_id  = p2_id if s1 > s2 else p1_id
+                winner_data = p1_data if s1 > s2 else p2_data
+                loser_data  = p2_data if s1 > s2 else p1_data
+                winner_goals = s1 if s1 > s2 else s2
+                loser_goals  = s2 if s1 > s2 else s1
+                new_winner_elo, new_loser_elo, gain, loss = calc_elo(winner_data["elo"], loser_data["elo"])
+                new_winner_streak = winner_data.get("current_winstreak", 0) + 1
+                streak_coins = new_winner_streak if new_winner_streak >= 2 else 0
+                winner_coins = 1 + 3 + streak_coins  # played + win + streak bonus
+                c.execute("""UPDATE ranked_players SET elo = %s, wins = wins + 1, coins = coins + %s,
+                             goals_for = goals_for + %s, goals_against = goals_against + %s,
+                             current_winstreak = current_winstreak + 1,
+                             max_winstreak = GREATEST(max_winstreak, current_winstreak + 1),
+                             current_losestreak = 0
+                             WHERE name = %s""", (new_winner_elo, winner_coins, winner_goals, loser_goals, winner_id))
+                c.execute("""UPDATE ranked_players SET elo = %s, losses = losses + 1, coins = coins + 1,
+                             goals_for = goals_for + %s, goals_against = goals_against + %s,
+                             current_winstreak = 0,
+                             current_losestreak = current_losestreak + 1
+                             WHERE name = %s""", (new_loser_elo, loser_goals, winner_goals, loser_id))
+                c.execute("""
+                    INSERT INTO ranked_matches (player1, player2, score1, score2, elo_change, date)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                """, (p1_id, p2_id, s1, s2, gain, datetime.now().isoformat()))
 
         conn.commit()
         conn.close()
         del pending_ranked_scores[msg_id]
+
+        if stats_blocked:
+            _p1m = interaction.guild.get_member(int(p1_id))
+            _p2m = interaction.guild.get_member(int(p2_id))
+            p1_name_b = _p1m.display_name if _p1m else p1_id
+            p2_name_b = _p2m.display_name if _p2m else p2_id
+            embed = discord.Embed(title="⚠️ Score bevestigd — Geen stats geteld", color=0xFF6600)
+            embed.description = (
+                f"<@{p1_id}> **{s1} - {s2}** <@{p2_id}>\n\n"
+                f"⛔ {blocked_reason}\n"
+                f"De uitslag is bevestigd maar er zijn geen punten, ELO of goals bijgehouden."
+            )
+            await interaction.response.edit_message(embed=embed, view=None)
+            return
 
         # Sync tier roles for both players
         _p1m = interaction.guild.get_member(int(p1_id))
@@ -2686,9 +2766,11 @@ async def on_interaction(interaction: discord.Interaction):
     current_winstreak="New current winstreak",
     max_winstreak="New best winstreak",
     goals_for="New goals scored",
-    goals_against="New goals conceded"
+    goals_against="New goals conceded",
+    current_losestreak="New current lose streak",
+    count_stats="Tellen stats mee voor deze speler? (yes/no)"
 )
-async def rankedsetstats(interaction: discord.Interaction, player: discord.Member, elo: int = None, wins: int = None, losses: int = None, draws: int = None, current_winstreak: int = None, max_winstreak: int = None, goals_for: int = None, goals_against: int = None):
+async def rankedsetstats(interaction: discord.Interaction, player: discord.Member, elo: int = None, wins: int = None, losses: int = None, draws: int = None, current_winstreak: int = None, max_winstreak: int = None, goals_for: int = None, goals_against: int = None, current_losestreak: int = None, count_stats: str = None):
     uid = str(player.id)
     conn = get_db()
     c = conn.cursor()
@@ -2735,6 +2817,15 @@ async def rankedsetstats(interaction: discord.Interaction, player: discord.Membe
         updates.append("goals_against = %s")
         values.append(max(0, goals_against))
         changed.append(f"Goals Conceded: {max(0, goals_against)}")
+    if current_losestreak is not None:
+        updates.append("current_losestreak = %s")
+        values.append(max(0, current_losestreak))
+        changed.append(f"Lose Streak: {max(0, current_losestreak)}")
+    if count_stats is not None:
+        val = count_stats.strip().lower() in ("yes", "ja", "true", "1")
+        updates.append("count_stats = %s")
+        values.append(val)
+        changed.append(f"Stats tellen: {'✅ Ja' if val else '❌ Nee'}")
 
     if not updates:
         conn.close()
