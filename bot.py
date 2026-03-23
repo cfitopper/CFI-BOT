@@ -2363,6 +2363,7 @@ async def on_interaction(interaction: discord.Interaction):
         seeker = interaction.guild.get_member(int(seeker_id))
         accepter_member = interaction.guild.get_member(int(uid))
         host = random.choice([seeker, accepter_member])
+        lobby_password = ''.join(random.choices('0123456789', k=6))
         del active_matchmaking[msg_id]
         conn = get_db()
         log_matchmaking(conn, seeker_id, "match_found", legs=legs, opponent_id=uid)
@@ -2373,6 +2374,7 @@ async def on_interaction(interaction: discord.Interaction):
         match_embed.description = (
             f"**{seeker.display_name if seeker else seeker_id}** vs **{accepter_member.display_name if accepter_member else uid}**\n\n"
             f"🏠 **Host:** {host.display_name if host else 'Unknown'}\n"
+            f"🔑 **Lobby Password:** {lobby_password}\n"
             f"🎯 **Format:** {legs_label}\n\n"
             f"Use `/rankedscore` when the match is done!"
         )
@@ -2860,12 +2862,14 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
             seeker = guild.get_member(int(seeker_id))
             accepter_member = guild.get_member(int(uid))
             host = random.choice([seeker, accepter_member])
+            lobby_password = ''.join(random.choices('0123456789', k=6))
             legs_label = f"{legs} leg{'s' if legs > 1 else ''}"
 
             match_embed = discord.Embed(title="✅ Match Found!", color=0x00ff88)
             match_embed.description = (
                 f"**{seeker.display_name if seeker else seeker_id}** vs **{accepter_member.display_name if accepter_member else uid}**\n\n"
                 f"🏠 **Host:** {host.display_name if host else 'Unknown'}\n"
+                f"🔑 **Lobby Password:** {lobby_password}\n"
                 f"🎯 **Format:** {legs_label}\n\n"
                 f"Use `/rankedscore` when the match is done!"
             )
