@@ -2122,12 +2122,26 @@ async def rankedmatchscore(interaction: discord.Interaction, player1: discord.Me
             streaker_name.append(player2.display_name)
         blocked_reason = f"Stats not counted: **{', '.join(streaker_name)}** has a lose streak of 10+."
 
+    # Always calculate ELO for display purposes
+    if is_draw:
+        new_p1_elo, new_p2_elo, change_1, change_2 = calc_elo_draw(p1_data["elo"], p2_data["elo"])
+        draw_coins = 2
+    else:
+        winner_id = p1_id if s1 > s2 else p2_id
+        loser_id  = p2_id if s1 > s2 else p1_id
+        winner_data = p1_data if s1 > s2 else p2_data
+        loser_data  = p2_data if s1 > s2 else p1_data
+        winner_goals = s1 if s1 > s2 else s2
+        loser_goals  = s2 if s1 > s2 else s1
+        new_winner_elo, new_loser_elo, gain, loss = calc_elo(winner_data["elo"], loser_data["elo"])
+        new_winner_streak = winner_data.get("current_winstreak", 0) + 1
+        streak_coins = new_winner_streak if new_winner_streak >= 2 else 0
+        winner_coins = 1 + 3 + streak_coins  # played + win + streak bonus
+
     conn = get_db()
     c = conn.cursor()
     if not stats_blocked:
         if is_draw:
-            new_p1_elo, new_p2_elo, change_1, change_2 = calc_elo_draw(p1_data["elo"], p2_data["elo"])
-            draw_coins = 2
             c.execute("""UPDATE ranked_players SET elo = %s, draws = draws + 1, coins = coins + 2,
                          goals_for = goals_for + %s, goals_against = goals_against + %s,
                          current_winstreak = 0, current_losestreak = 0 WHERE name = %s""", (new_p1_elo, s1, s2, p1_id))
@@ -2137,16 +2151,6 @@ async def rankedmatchscore(interaction: discord.Interaction, player1: discord.Me
             c.execute("INSERT INTO ranked_matches (player1, player2, score1, score2, elo_change, date) VALUES (%s, %s, %s, %s, %s, %s)",
                       (p1_id, p2_id, s1, s2, 0, datetime.now().isoformat()))
         else:
-            winner_id = p1_id if s1 > s2 else p2_id
-            loser_id  = p2_id if s1 > s2 else p1_id
-            winner_data = p1_data if s1 > s2 else p2_data
-            loser_data  = p2_data if s1 > s2 else p1_data
-            winner_goals = s1 if s1 > s2 else s2
-            loser_goals  = s2 if s1 > s2 else s1
-            new_winner_elo, new_loser_elo, gain, loss = calc_elo(winner_data["elo"], loser_data["elo"])
-            new_winner_streak = winner_data.get("current_winstreak", 0) + 1
-            streak_coins = new_winner_streak if new_winner_streak >= 2 else 0
-            winner_coins = 1 + 3 + streak_coins  # played + win + streak bonus
             c.execute("""UPDATE ranked_players SET elo = %s, wins = wins + 1, coins = coins + %s,
                          goals_for = goals_for + %s, goals_against = goals_against + %s,
                          current_winstreak = current_winstreak + 1,
@@ -2163,34 +2167,24 @@ async def rankedmatchscore(interaction: discord.Interaction, player1: discord.Me
     conn.commit()
     conn.close()
 
-    if stats_blocked:
-        embed = discord.Embed(title="⚠️ Score submitted — Stats not counted", color=0xFF6600)
-        embed.description = (
-            f"**{player1.display_name}** {s1} — {s2} **{player2.display_name}**\n\n"
-            f"⛔ {blocked_reason}\n"
-            f"The result has been submitted but no ELO, wins or goals were recorded."
-        )
-        await interaction.followup.send(embed=embed)
-        return
-
-    # Sync tier roles for both players
+    # Sync tier roles and challenge roles only when stats count
     p1_member = interaction.guild.get_member(int(p1_id))
     p2_member = interaction.guild.get_member(int(p2_id))
-    if is_draw:
-        if p1_member:
-            await assign_ranked_tier_role(interaction.guild, p1_member, new_p1_elo)
-        if p2_member:
-            await assign_ranked_tier_role(interaction.guild, p2_member, new_p2_elo)
-    else:
-        winner_member = interaction.guild.get_member(int(winner_id))
-        loser_member  = interaction.guild.get_member(int(loser_id))
-        if winner_member:
-            await assign_ranked_tier_role(interaction.guild, winner_member, new_winner_elo)
-        if loser_member:
-            await assign_ranked_tier_role(interaction.guild, loser_member, new_loser_elo)
-
-    if not is_draw:
-        await check_and_award_challenge_roles(interaction.guild, winner_id, loser_id, winner_goals, loser_goals, new_winner_streak)
+    if not stats_blocked:
+        if is_draw:
+            if p1_member:
+                await assign_ranked_tier_role(interaction.guild, p1_member, new_p1_elo)
+            if p2_member:
+                await assign_ranked_tier_role(interaction.guild, p2_member, new_p2_elo)
+        else:
+            winner_member = interaction.guild.get_member(int(winner_id))
+            loser_member  = interaction.guild.get_member(int(loser_id))
+            if winner_member:
+                await assign_ranked_tier_role(interaction.guild, winner_member, new_winner_elo)
+            if loser_member:
+                await assign_ranked_tier_role(interaction.guild, loser_member, new_loser_elo)
+        if not is_draw:
+            await check_and_award_challenge_roles(interaction.guild, winner_id, loser_id, winner_goals, loser_goals, new_winner_streak)
 
     p1_name = player1.display_name
     p2_name = player2.display_name
@@ -2224,6 +2218,8 @@ async def rankedmatchscore(interaction: discord.Interaction, player1: discord.Me
             f"**{p2_name}**\n"
             f"**Elo:** {new_p2_elo} pts ({p2_rank}) `+{change_2}` | 🪙 +{draw_coins}"
         )
+        if stats_blocked:
+            embed.description += f"\n\n⚠️ {blocked_reason}"
         embed.set_footer(text=f"Submitted by {interaction.user.display_name}")
     else:
         winner_member = interaction.guild.get_member(int(winner_id))
@@ -2259,6 +2255,8 @@ async def rankedmatchscore(interaction: discord.Interaction, player1: discord.Me
             f"**{loser_name}**\n"
             f"**Elo:** {new_loser_elo} pts ({loser_rank}) `-{loss}` | 🪙 +1"
         )
+        if stats_blocked:
+            embed.description += f"\n\n⚠️ {blocked_reason}"
         embed.set_footer(text=f"Submitted by {interaction.user.display_name}")
 
     ranked_channel = discord.utils.get(interaction.guild.text_channels, name="ranked-score")
@@ -2503,10 +2501,24 @@ async def on_interaction(interaction: discord.Interaction):
                 streaker_name.append(interaction.guild.get_member(int(p2_id)).display_name if interaction.guild.get_member(int(p2_id)) else p2_id)
             blocked_reason = f"Stats not counted: **{', '.join(streaker_name)}** has a lose streak of 10+."
 
+        # Always calculate ELO for display purposes
+        if is_draw:
+            new_p1_elo, new_p2_elo, change_1, change_2 = calc_elo_draw(p1_data["elo"], p2_data["elo"])
+            draw_coins = 2
+        else:
+            winner_id = p1_id if s1 > s2 else p2_id
+            loser_id  = p2_id if s1 > s2 else p1_id
+            winner_data = p1_data if s1 > s2 else p2_data
+            loser_data  = p2_data if s1 > s2 else p1_data
+            winner_goals = s1 if s1 > s2 else s2
+            loser_goals  = s2 if s1 > s2 else s1
+            new_winner_elo, new_loser_elo, gain, loss = calc_elo(winner_data["elo"], loser_data["elo"])
+            new_winner_streak = winner_data.get("current_winstreak", 0) + 1
+            streak_coins = new_winner_streak if new_winner_streak >= 2 else 0
+            winner_coins = 1 + 3 + streak_coins  # played + win + streak bonus
+
         if not stats_blocked:
             if is_draw:
-                new_p1_elo, new_p2_elo, change_1, change_2 = calc_elo_draw(p1_data["elo"], p2_data["elo"])
-                draw_coins = 2
                 c.execute("""UPDATE ranked_players SET elo = %s, draws = draws + 1, coins = coins + 2,
                              goals_for = goals_for + %s, goals_against = goals_against + %s,
                              current_winstreak = 0, current_losestreak = 0 WHERE name = %s""", (new_p1_elo, s1, s2, p1_id))
@@ -2518,16 +2530,6 @@ async def on_interaction(interaction: discord.Interaction):
                     VALUES (%s, %s, %s, %s, %s, %s)
                 """, (p1_id, p2_id, s1, s2, 0, datetime.now().isoformat()))
             else:
-                winner_id = p1_id if s1 > s2 else p2_id
-                loser_id  = p2_id if s1 > s2 else p1_id
-                winner_data = p1_data if s1 > s2 else p2_data
-                loser_data  = p2_data if s1 > s2 else p1_data
-                winner_goals = s1 if s1 > s2 else s2
-                loser_goals  = s2 if s1 > s2 else s1
-                new_winner_elo, new_loser_elo, gain, loss = calc_elo(winner_data["elo"], loser_data["elo"])
-                new_winner_streak = winner_data.get("current_winstreak", 0) + 1
-                streak_coins = new_winner_streak if new_winner_streak >= 2 else 0
-                winner_coins = 1 + 3 + streak_coins  # played + win + streak bonus
                 c.execute("""UPDATE ranked_players SET elo = %s, wins = wins + 1, coins = coins + %s,
                              goals_for = goals_for + %s, goals_against = goals_against + %s,
                              current_winstreak = current_winstreak + 1,
@@ -2548,38 +2550,24 @@ async def on_interaction(interaction: discord.Interaction):
         conn.close()
         del pending_ranked_scores[msg_id]
 
-        if stats_blocked:
-            _p1m = interaction.guild.get_member(int(p1_id))
-            _p2m = interaction.guild.get_member(int(p2_id))
-            p1_name_b = _p1m.display_name if _p1m else p1_id
-            p2_name_b = _p2m.display_name if _p2m else p2_id
-            embed = discord.Embed(title="⚠️ Score confirmed — Stats not counted", color=0xFF6600)
-            embed.description = (
-                f"<@{p1_id}> **{s1} - {s2}** <@{p2_id}>\n\n"
-                f"⛔ {blocked_reason}\n"
-                f"The result has been confirmed but no ELO, wins or goals were recorded."
-            )
-            await interaction.response.edit_message(embed=embed, view=None)
-            return
-
-        # Sync tier roles for both players
+        # Sync tier roles and challenge roles only when stats count
         _p1m = interaction.guild.get_member(int(p1_id))
         _p2m = interaction.guild.get_member(int(p2_id))
-        if is_draw:
-            if _p1m:
-                await assign_ranked_tier_role(interaction.guild, _p1m, new_p1_elo)
-            if _p2m:
-                await assign_ranked_tier_role(interaction.guild, _p2m, new_p2_elo)
-        else:
-            _wm = interaction.guild.get_member(int(winner_id))
-            _lm = interaction.guild.get_member(int(loser_id))
-            if _wm:
-                await assign_ranked_tier_role(interaction.guild, _wm, new_winner_elo)
-            if _lm:
-                await assign_ranked_tier_role(interaction.guild, _lm, new_loser_elo)
-
-        if not is_draw:
-            await check_and_award_challenge_roles(interaction.guild, winner_id, loser_id, winner_goals, loser_goals, new_winner_streak)
+        if not stats_blocked:
+            if is_draw:
+                if _p1m:
+                    await assign_ranked_tier_role(interaction.guild, _p1m, new_p1_elo)
+                if _p2m:
+                    await assign_ranked_tier_role(interaction.guild, _p2m, new_p2_elo)
+            else:
+                _wm = interaction.guild.get_member(int(winner_id))
+                _lm = interaction.guild.get_member(int(loser_id))
+                if _wm:
+                    await assign_ranked_tier_role(interaction.guild, _wm, new_winner_elo)
+                if _lm:
+                    await assign_ranked_tier_role(interaction.guild, _lm, new_loser_elo)
+            if not is_draw:
+                await check_and_award_challenge_roles(interaction.guild, winner_id, loser_id, winner_goals, loser_goals, new_winner_streak)
 
         if is_draw:
             p1_member = interaction.guild.get_member(int(p1_id))
@@ -2614,6 +2602,8 @@ async def on_interaction(interaction: discord.Interaction):
                 f"**{p2_name}**\n"
                 f"**Elo:** {new_p2_elo} pts ({p2_rank}) `{'+' if change_2 >= 0 else ''}{change_2}` | 🪙 +{draw_coins}"
             )
+            if stats_blocked:
+                embed.description += f"\n\n⚠️ {blocked_reason}"
         else:
             winner_member = interaction.guild.get_member(int(winner_id))
             loser_member  = interaction.guild.get_member(int(loser_id))
@@ -2648,6 +2638,8 @@ async def on_interaction(interaction: discord.Interaction):
                 f"**{loser_name}**\n"
                 f"**Elo:** {new_loser_elo} pts ({loser_rank}) `-{loss}` | 🪙 +1"
             )
+            if stats_blocked:
+                embed.description += f"\n\n⚠️ {blocked_reason}"
 
         if banner_file:
             embed.set_image(url="attachment://ranked_result.png")
@@ -2655,36 +2647,37 @@ async def on_interaction(interaction: discord.Interaction):
         else:
             await interaction.response.edit_message(embed=embed, view=None)
 
-        # Send undo button to #ranked-score-mods
-        try:
-            mods_channel = discord.utils.get(interaction.guild.text_channels, name="ranked-score-mods")
-            if mods_channel:
-                if is_draw:
-                    undo_data = {
-                        "p1": p1_id, "p2": p2_id,
-                        "old_p1_elo": p1_data["elo"], "old_p2_elo": p2_data["elo"],
-                        "old_p1_wins": p1_data["wins"], "old_p1_losses": p1_data["losses"], "old_p1_draws": p1_data.get("draws", 0),
-                        "old_p2_wins": p2_data["wins"], "old_p2_losses": p2_data["losses"], "old_p2_draws": p2_data.get("draws", 0),
-                        "result": "draw"
-                    }
-                    undo_desc = f"**Draw:** <@{p1_id}> {s1} - {s2} <@{p2_id}>"
-                else:
-                    undo_data = {
-                        "p1": winner_id, "p2": loser_id,
-                        "old_p1_elo": winner_data["elo"], "old_p2_elo": loser_data["elo"],
-                        "old_p1_wins": winner_data["wins"], "old_p1_losses": winner_data["losses"], "old_p1_draws": winner_data.get("draws", 0),
-                        "old_p2_wins": loser_data["wins"], "old_p2_losses": loser_data["losses"], "old_p2_draws": loser_data.get("draws", 0),
-                        "result": "win"
-                    }
-                    undo_desc = f"**Result:** <@{winner_id}> {max(s1,s2)} - {min(s1,s2)} <@{loser_id}>"
-                undo_embed = discord.Embed(title="📋 Ranked Score Logged", color=0x5865F2)
-                undo_embed.description = undo_desc + f"\nSubmitted by <@{data['submitter']}>"
-                undo_view = discord.ui.View(timeout=None)
-                undo_btn = discord.ui.Button(label="🔄 Undo Score", style=discord.ButtonStyle.red, custom_id=f"ranked_undo_{undo_data['p1']}_{undo_data['p2']}_{undo_data['old_p1_elo']}_{undo_data['old_p2_elo']}_{undo_data['old_p1_wins']}_{undo_data['old_p1_losses']}_{undo_data['old_p1_draws']}_{undo_data['old_p2_wins']}_{undo_data['old_p2_losses']}_{undo_data['old_p2_draws']}_{undo_data['result']}")
-                undo_view.add_item(undo_btn)
-                await mods_channel.send(embed=undo_embed, view=undo_view)
-        except Exception as e:
-            print(f"Error sending to ranked-score-mods: {e}")
+        # Send undo button to #ranked-score-mods (only when stats were counted)
+        if not stats_blocked:
+            try:
+                mods_channel = discord.utils.get(interaction.guild.text_channels, name="ranked-score-mods")
+                if mods_channel:
+                    if is_draw:
+                        undo_data = {
+                            "p1": p1_id, "p2": p2_id,
+                            "old_p1_elo": p1_data["elo"], "old_p2_elo": p2_data["elo"],
+                            "old_p1_wins": p1_data["wins"], "old_p1_losses": p1_data["losses"], "old_p1_draws": p1_data.get("draws", 0),
+                            "old_p2_wins": p2_data["wins"], "old_p2_losses": p2_data["losses"], "old_p2_draws": p2_data.get("draws", 0),
+                            "result": "draw"
+                        }
+                        undo_desc = f"**Draw:** <@{p1_id}> {s1} - {s2} <@{p2_id}>"
+                    else:
+                        undo_data = {
+                            "p1": winner_id, "p2": loser_id,
+                            "old_p1_elo": winner_data["elo"], "old_p2_elo": loser_data["elo"],
+                            "old_p1_wins": winner_data["wins"], "old_p1_losses": winner_data["losses"], "old_p1_draws": winner_data.get("draws", 0),
+                            "old_p2_wins": loser_data["wins"], "old_p2_losses": loser_data["losses"], "old_p2_draws": loser_data.get("draws", 0),
+                            "result": "win"
+                        }
+                        undo_desc = f"**Result:** <@{winner_id}> {max(s1,s2)} - {min(s1,s2)} <@{loser_id}>"
+                    undo_embed = discord.Embed(title="📋 Ranked Score Logged", color=0x5865F2)
+                    undo_embed.description = undo_desc + f"\nSubmitted by <@{data['submitter']}>"
+                    undo_view = discord.ui.View(timeout=None)
+                    undo_btn = discord.ui.Button(label="🔄 Undo Score", style=discord.ButtonStyle.red, custom_id=f"ranked_undo_{undo_data['p1']}_{undo_data['p2']}_{undo_data['old_p1_elo']}_{undo_data['old_p2_elo']}_{undo_data['old_p1_wins']}_{undo_data['old_p1_losses']}_{undo_data['old_p1_draws']}_{undo_data['old_p2_wins']}_{undo_data['old_p2_losses']}_{undo_data['old_p2_draws']}_{undo_data['result']}")
+                    undo_view.add_item(undo_btn)
+                    await mods_channel.send(embed=undo_embed, view=undo_view)
+            except Exception as e:
+                print(f"Error sending to ranked-score-mods: {e}")
 
     # ---- SCORE DENY ----
     elif custom_id == "ranked_deny":
