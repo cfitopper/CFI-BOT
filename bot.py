@@ -2113,14 +2113,14 @@ async def rankedmatchscore(interaction: discord.Interaction, player1: discord.Me
             blocked_name.append(player1.display_name)
         if p2_no_stats:
             blocked_name.append(player2.display_name)
-        blocked_reason = f"Stats tellen niet: **{', '.join(blocked_name)}** heeft stats uitgeschakeld."
+        blocked_reason = f"Stats not counted: **{', '.join(blocked_name)}** has stats disabled."
     elif p1_losestreak >= 10 or p2_losestreak >= 10:
         streaker_name = []
         if p1_losestreak >= 10:
             streaker_name.append(player1.display_name)
         if p2_losestreak >= 10:
             streaker_name.append(player2.display_name)
-        blocked_reason = f"Stats tellen niet: **{', '.join(streaker_name)}** heeft een lose streak van 10+."
+        blocked_reason = f"Stats not counted: **{', '.join(streaker_name)}** has a lose streak of 10+."
 
     conn = get_db()
     c = conn.cursor()
@@ -2164,11 +2164,11 @@ async def rankedmatchscore(interaction: discord.Interaction, player1: discord.Me
     conn.close()
 
     if stats_blocked:
-        embed = discord.Embed(title="⚠️ Score ingevoerd — Geen stats geteld", color=0xFF6600)
+        embed = discord.Embed(title="⚠️ Score submitted — Stats not counted", color=0xFF6600)
         embed.description = (
             f"**{player1.display_name}** {s1} — {s2} **{player2.display_name}**\n\n"
             f"⛔ {blocked_reason}\n"
-            f"De uitslag is ingevoerd maar er zijn geen punten, ELO of goals bijgehouden."
+            f"The result has been submitted but no ELO, wins or goals were recorded."
         )
         await interaction.followup.send(embed=embed)
         return
@@ -2494,14 +2494,14 @@ async def on_interaction(interaction: discord.Interaction):
                 blocked_name.append(interaction.guild.get_member(int(p1_id)).display_name if interaction.guild.get_member(int(p1_id)) else p1_id)
             if p2_no_stats:
                 blocked_name.append(interaction.guild.get_member(int(p2_id)).display_name if interaction.guild.get_member(int(p2_id)) else p2_id)
-            blocked_reason = f"Stats tellen niet: **{', '.join(blocked_name)}** heeft stats uitgeschakeld."
+            blocked_reason = f"Stats not counted: **{', '.join(blocked_name)}** has stats disabled."
         elif p1_losestreak >= 10 or p2_losestreak >= 10:
             streaker_name = []
             if p1_losestreak >= 10:
                 streaker_name.append(interaction.guild.get_member(int(p1_id)).display_name if interaction.guild.get_member(int(p1_id)) else p1_id)
             if p2_losestreak >= 10:
                 streaker_name.append(interaction.guild.get_member(int(p2_id)).display_name if interaction.guild.get_member(int(p2_id)) else p2_id)
-            blocked_reason = f"Stats tellen niet: **{', '.join(streaker_name)}** heeft een lose streak van 10+."
+            blocked_reason = f"Stats not counted: **{', '.join(streaker_name)}** has a lose streak of 10+."
 
         if not stats_blocked:
             if is_draw:
@@ -2553,11 +2553,11 @@ async def on_interaction(interaction: discord.Interaction):
             _p2m = interaction.guild.get_member(int(p2_id))
             p1_name_b = _p1m.display_name if _p1m else p1_id
             p2_name_b = _p2m.display_name if _p2m else p2_id
-            embed = discord.Embed(title="⚠️ Score bevestigd — Geen stats geteld", color=0xFF6600)
+            embed = discord.Embed(title="⚠️ Score confirmed — Stats not counted", color=0xFF6600)
             embed.description = (
                 f"<@{p1_id}> **{s1} - {s2}** <@{p2_id}>\n\n"
                 f"⛔ {blocked_reason}\n"
-                f"De uitslag is bevestigd maar er zijn geen punten, ELO of goals bijgehouden."
+                f"The result has been confirmed but no ELO, wins or goals were recorded."
             )
             await interaction.response.edit_message(embed=embed, view=None)
             return
@@ -2825,7 +2825,7 @@ async def rankedsetstats(interaction: discord.Interaction, player: discord.Membe
         val = count_stats.strip().lower() in ("yes", "ja", "true", "1")
         updates.append("count_stats = %s")
         values.append(val)
-        changed.append(f"Stats tellen: {'✅ Ja' if val else '❌ Nee'}")
+        changed.append(f"Count Stats: {'✅ Yes' if val else '❌ No'}")
 
     if not updates:
         conn.close()
