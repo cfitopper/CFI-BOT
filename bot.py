@@ -2598,7 +2598,7 @@ async def on_interaction(interaction: discord.Interaction):
                 undo_embed = discord.Embed(title="📋 Ranked Score Logged", color=0x5865F2)
                 undo_embed.description = undo_desc + f"\nSubmitted by <@{data['submitter']}>"
                 undo_view = discord.ui.View(timeout=None)
-                undo_btn = discord.ui.Button(label="🔄 Undo Score", style=discord.ButtonStyle.red, custom_id=f"ranked_undo_{p1_id}_{p2_id}_{undo_data['old_p1_elo']}_{undo_data['old_p2_elo']}_{undo_data['old_p1_wins']}_{undo_data['old_p1_losses']}_{undo_data['old_p1_draws']}_{undo_data['old_p2_wins']}_{undo_data['old_p2_losses']}_{undo_data['old_p2_draws']}_{undo_data['result']}")
+                undo_btn = discord.ui.Button(label="🔄 Undo Score", style=discord.ButtonStyle.red, custom_id=f"ranked_undo_{undo_data['p1']}_{undo_data['p2']}_{undo_data['old_p1_elo']}_{undo_data['old_p2_elo']}_{undo_data['old_p1_wins']}_{undo_data['old_p1_losses']}_{undo_data['old_p1_draws']}_{undo_data['old_p2_wins']}_{undo_data['old_p2_losses']}_{undo_data['old_p2_draws']}_{undo_data['result']}")
                 undo_view.add_item(undo_btn)
                 await mods_channel.send(embed=undo_embed, view=undo_view)
         except Exception as e:
