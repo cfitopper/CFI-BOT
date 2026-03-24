@@ -2304,6 +2304,133 @@ async def rankedmatchscore(interaction: discord.Interaction, player1: discord.Me
         print(f"Error sending to ranked-score-mods: {e}")
 
 
+@tree.command(name="rankedunscore", description="Undo the last ranked match between two players (mods only)")
+@app_commands.describe(player1="First player", player2="Second player")
+async def rankedunscore(interaction: discord.Interaction, player1: discord.Member, player2: discord.Member):
+    await interaction.response.defer(ephemeral=True)
+    user_roles = [r.name for r in interaction.user.roles]
+    if not any(r in user_roles for r in RANKED_MOD_ROLES):
+        await interaction.followup.send("❌ You don't have permission to use this command.", ephemeral=True)
+        return
+
+    p1_id = str(player1.id)
+    p2_id = str(player2.id)
+
+    conn = get_db()
+    c = conn.cursor()
+
+    c.execute("""
+        SELECT * FROM ranked_matches
+        WHERE (player1 = %s AND player2 = %s) OR (player1 = %s AND player2 = %s)
+        ORDER BY id DESC LIMIT 1
+    """, (p1_id, p2_id, p2_id, p1_id))
+    match = c.fetchone()
+
+    if not match:
+        await interaction.followup.send(
+            f"❌ No ranked match found between {player1.display_name} and {player2.display_name}.",
+            ephemeral=True
+        )
+        conn.close()
+        return
+
+    match = dict(match)
+    s1, s2 = match["score1"], match["score2"]
+    elo_change = match["elo_change"]
+    is_draw = s1 == s2
+
+    # Determine winner/loser based on who was player1/player2 in the stored record
+    if is_draw:
+        a_id, b_id = match["player1"], match["player2"]
+    elif s1 > s2:
+        a_id, b_id = match["player1"], match["player2"]  # a = winner, b = loser
+    else:
+        a_id, b_id = match["player2"], match["player1"]  # a = winner, b = loser
+
+    c.execute("SELECT * FROM ranked_players WHERE name = %s", (a_id,))
+    a_data = c.fetchone()
+    c.execute("SELECT * FROM ranked_players WHERE name = %s", (b_id,))
+    b_data = c.fetchone()
+
+    if not a_data or not b_data:
+        await interaction.followup.send("❌ One or both players not found in ranked players.", ephemeral=True)
+        conn.close()
+        return
+
+    a_data = dict(a_data)
+    b_data = dict(b_data)
+
+    # Delete the match first
+    c.execute("DELETE FROM ranked_matches WHERE id = %s", (match["id"],))
+
+    # Reverse ELO
+    if is_draw:
+        # Approximate pre-draw ELO by computing draw changes from current (post-draw) elos.
+        # calc_elo_draw depends only on the elo difference, not absolutes, so error is at most 1pt.
+        _, _, change_a, change_b = calc_elo_draw(a_data["elo"], b_data["elo"])
+        new_a_elo = max(0, a_data["elo"] - change_a)
+        new_b_elo = max(0, b_data["elo"] - change_b)
+        c.execute("""UPDATE ranked_players SET elo = %s,
+                     draws = GREATEST(draws - 1, 0) WHERE name = %s""",
+                  (new_a_elo, a_id))
+        c.execute("""UPDATE ranked_players SET elo = %s,
+                     draws = GREATEST(draws - 1, 0) WHERE name = %s""",
+                  (new_b_elo, b_id))
+    else:
+        winner_id, loser_id = a_id, b_id
+        winner_data, loser_data = a_data, b_data
+        new_winner_elo = max(0, winner_data["elo"] - elo_change)
+        new_loser_elo = loser_data["elo"] + elo_change
+        c.execute("""UPDATE ranked_players SET elo = %s,
+                     wins = GREATEST(wins - 1, 0) WHERE name = %s""",
+                  (new_winner_elo, winner_id))
+        c.execute("""UPDATE ranked_players SET elo = %s,
+                     losses = GREATEST(losses - 1, 0) WHERE name = %s""",
+                  (new_loser_elo, loser_id))
+
+    # Recalculate goals, streaks and coins from remaining match history for both players
+    for pid in [a_id, b_id]:
+        c.execute("""
+            SELECT
+                COALESCE(SUM(CASE WHEN player1 = %s THEN score1 WHEN player2 = %s THEN score2 ELSE 0 END), 0) AS gf,
+                COALESCE(SUM(CASE WHEN player1 = %s THEN score2 WHEN player2 = %s THEN score1 ELSE 0 END), 0) AS ga
+            FROM ranked_matches WHERE player1 = %s OR player2 = %s
+        """, (pid, pid, pid, pid, pid, pid))
+        goals_row = dict(c.fetchone())
+        curr_ws, max_ws = _calc_streaks_from_db(c, pid)
+        new_coins = _calc_coins_from_db(c, pid)
+        c.execute("""UPDATE ranked_players SET
+                     goals_for = %s, goals_against = %s,
+                     current_winstreak = %s, max_winstreak = %s,
+                     coins = %s WHERE name = %s""",
+                  (goals_row["gf"], goals_row["ga"], curr_ws, max_ws, new_coins, pid))
+
+    conn.commit()
+    conn.close()
+
+    # Reassign ranked tier roles
+    a_member = interaction.guild.get_member(int(a_id))
+    b_member = interaction.guild.get_member(int(b_id))
+    if is_draw:
+        if a_member:
+            await assign_ranked_tier_role(interaction.guild, a_member, new_a_elo)
+        if b_member:
+            await assign_ranked_tier_role(interaction.guild, b_member, new_b_elo)
+    else:
+        w_member = interaction.guild.get_member(int(winner_id))
+        l_member = interaction.guild.get_member(int(loser_id))
+        if w_member:
+            await assign_ranked_tier_role(interaction.guild, w_member, new_winner_elo)
+        if l_member:
+            await assign_ranked_tier_role(interaction.guild, l_member, new_loser_elo)
+
+    await interaction.followup.send(
+        f"↩️ Ranked match undone between **{player1.display_name}** and **{player2.display_name}**.\n"
+        f"ELO, stats, goals, streaks and coins have been recalculated.",
+        ephemeral=True
+    )
+
+
 @bot.event
 async def on_interaction(interaction: discord.Interaction):
     if interaction.type != discord.InteractionType.component:
