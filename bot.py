@@ -3907,6 +3907,47 @@ async def qualifierrevertscore(interaction: discord.Interaction, player1: discor
     )
 
 
+
+@tree.command(name="qualifymatch", description="Find out who your CFI Qualifier opponent is")
+async def qualifymatch(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+
+    uid = str(interaction.user.id)
+
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("""
+        SELECT * FROM qualifier_matchups
+        WHERE (player1 = %s OR player2 = %s) AND played = FALSE
+        LIMIT 1
+    """, (uid, uid))
+    matchup = c.fetchone()
+    conn.close()
+
+    if not matchup:
+        await interaction.followup.send(
+            "❌ You have no active qualifier matchup. Either you haven't been drawn yet or your match has already been played.",
+            ephemeral=True
+        )
+        return
+
+    matchup = dict(matchup)
+    opponent_id = matchup["player2"] if matchup["player1"] == uid else matchup["player1"]
+    opponent_member = interaction.guild.get_member(int(opponent_id))
+
+    embed = discord.Embed(title="⚽ Your CFI Qualifier Opponent", color=0x5865F2)
+    if opponent_member:
+        embed.description = (
+            f"Your opponent is <@{opponent_id}>!\n\n"
+            f"Contact them to schedule your match and submit the result with **/qualifierscore**."
+        )
+        embed.set_thumbnail(url=opponent_member.display_avatar.url)
+    else:
+        embed.description = f"Your opponent is <@{opponent_id}>."
+
+    await interaction.followup.send(embed=embed, ephemeral=True, allowed_mentions=discord.AllowedMentions(users=True))
+
+
 @tree.command(name="qualifiersetscore", description="Manually set a qualifier match score (mods only)")
 @app_commands.describe(player1="First player", player2="Second player", goals_player1="Goals for player 1", goals_player2="Goals for player 2")
 async def qualifiersetscore(interaction: discord.Interaction, player1: discord.Member, player2: discord.Member, goals_player1: int, goals_player2: int):
