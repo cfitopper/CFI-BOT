@@ -3723,7 +3723,7 @@ async def qualifierbracket(interaction: discord.Interaction):
     played = sum(1 for m in matchups if m["played"])
 
     lines = []
-    for m in matchups:
+    for i, m in enumerate(matchups):
         p1_member = interaction.guild.get_member(int(m["player1"]))
         p2_member = interaction.guild.get_member(int(m["player2"]))
         p1_name = p1_member.display_name if p1_member else m["player1"]
@@ -3731,9 +3731,9 @@ async def qualifierbracket(interaction: discord.Interaction):
         if m["played"]:
             winner_member = interaction.guild.get_member(int(m["winner"])) if m["winner"] else None
             winner_name = winner_member.display_name if winner_member else m["winner"]
-            lines.append(f"✅ {p1_name} **{m['score1']}–{m['score2']}** {p2_name} *(🏆 {winner_name})*")
+            lines.append(f"**{i+1}.** ✅ {p1_name} **{m['score1']}–{m['score2']}** {p2_name} *(🏆 {winner_name})*")
         else:
-            lines.append(f"⏳ **{p1_name}** vs **{p2_name}**")
+            lines.append(f"**{i+1}.** {p1_name} **vs** {p2_name}")
 
     embed = discord.Embed(
         title=f"🏆 CFI Qualifier Bracket — {played}/{total} played",
