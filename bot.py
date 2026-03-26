@@ -3907,4 +3907,108 @@ async def qualifierrevertscore(interaction: discord.Interaction, player1: discor
     )
 
 
+@tree.command(name="qualifiersetscore", description="Manually set a qualifier match score (mods only)")
+@app_commands.describe(player1="First player", player2="Second player", goals_player1="Goals for player 1", goals_player2="Goals for player 2")
+async def qualifiersetscore(interaction: discord.Interaction, player1: discord.Member, player2: discord.Member, goals_player1: int, goals_player2: int):
+    await interaction.response.defer(ephemeral=True)
+
+    user_roles = [r.name for r in interaction.user.roles]
+    if not any(r in user_roles for r in RANKED_MOD_ROLES):
+        await interaction.followup.send("❌ You don't have permission to use this command.", ephemeral=True)
+        return
+
+    if goals_player1 == goals_player2:
+        await interaction.followup.send("❌ Draws are not allowed in the qualifier — there must be a winner!", ephemeral=True)
+        return
+
+    p1_id = str(player1.id)
+    p2_id = str(player2.id)
+
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("""
+        SELECT id FROM qualifier_matchups
+        WHERE ((player1 = %s AND player2 = %s) OR (player1 = %s AND player2 = %s))
+        AND played = FALSE
+        LIMIT 1
+    """, (p1_id, p2_id, p2_id, p1_id))
+    matchup = c.fetchone()
+
+    if not matchup:
+        await interaction.followup.send(
+            f"❌ No active qualifier matchup found between **{player1.display_name}** and **{player2.display_name}**.",
+            ephemeral=True
+        )
+        conn.close()
+        return
+
+    matchup_id = dict(matchup)["id"]
+    s1, s2 = goals_player1, goals_player2
+    winner_id = p1_id if s1 > s2 else p2_id
+    loser_id  = p2_id if s1 > s2 else p1_id
+
+    c.execute("""
+        UPDATE qualifier_matchups
+        SET played = TRUE, winner = %s, score1 = %s, score2 = %s, date_played = %s
+        WHERE id = %s
+    """, (winner_id, s1, s2, datetime.now().isoformat(), matchup_id))
+    conn.commit()
+    conn.close()
+
+    winner_member = interaction.guild.get_member(int(winner_id))
+    loser_member  = interaction.guild.get_member(int(loser_id))
+    winner_name   = winner_member.display_name if winner_member else winner_id
+    loser_name    = loser_member.display_name  if loser_member  else loser_id
+
+    # Award CFI-Participant role to winner
+    participant_role = discord.utils.get(interaction.guild.roles, name="CFI-Participant")
+    if participant_role and winner_member:
+        try:
+            await winner_member.add_roles(participant_role, reason="CFI Qualifier win (manual score by mod)")
+        except Exception as e:
+            print(f"Failed to add CFI-Participant role: {e}")
+
+    # Post result in qualifier-result channel
+    result_channel = discord.utils.get(interaction.guild.text_channels, name="qualifier-result") or \
+                     discord.utils.get(interaction.guild.text_channels, name="qualifier-results")
+
+    banner_file = None
+    try:
+        async with aiohttp.ClientSession() as session:
+            winner_av_bytes = await fetch_avatar(session, winner_member.display_avatar.url) if winner_member else None
+            loser_av_bytes  = await fetch_avatar(session, loser_member.display_avatar.url)  if loser_member  else None
+        banner_io = generate_ranked_banner(
+            winner_name=winner_name, loser_name=loser_name,
+            score_winner=max(s1, s2), score_loser=min(s1, s2),
+            winner_elo=0, loser_elo=0,
+            elo_gain=0, elo_loss=0,
+            winner_rank="", loser_rank="",
+            winner_avatar_bytes=winner_av_bytes, loser_avatar_bytes=loser_av_bytes,
+        )
+        banner_file = discord.File(banner_io, filename="qualifier_result.png")
+    except Exception as e:
+        print(f"Qualifier banner error: {e}")
+
+    embed = discord.Embed(title="✅ Qualifier Result Confirmed!", color=0x00ff88)
+    embed.description = (
+        f"<@{winner_id}> **{max(s1,s2)} - {min(s1,s2)}** <@{loser_id}>\n\n"
+        f"🏆 **{winner_name}** wins!\n\n"
+        f"🎉 **{winner_name}** is officially qualified for the **CFI League**!"
+    )
+    embed.set_footer(text=f"Manually submitted by {interaction.user.display_name}")
+
+    if result_channel:
+        if banner_file:
+            embed.set_image(url="attachment://qualifier_result.png")
+            await result_channel.send(embed=embed, file=banner_file, allowed_mentions=discord.AllowedMentions(users=True))
+        else:
+            await result_channel.send(embed=embed, allowed_mentions=discord.AllowedMentions(users=True))
+
+    await interaction.followup.send(
+        f"✅ Score set: **{player1.display_name} {s1} — {s2} {player2.display_name}**. "
+        f"**{winner_name}** has been given the **CFI-Participant** role.",
+        ephemeral=True
+    )
+
+
 bot.run(BOT_TOKEN)
