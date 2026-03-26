@@ -1538,6 +1538,7 @@ async def on_ready():
         setup_db()
         conn_r = get_db()
         setup_ranked_db(conn_r)
+        setup_qualifier_db(conn_r)
         c_r = conn_r.cursor()
         c_r.execute("SELECT value FROM bot_config WHERE key = 'ranked_reaction_msg_id'")
         row = c_r.fetchone()
@@ -1906,9 +1907,28 @@ def setup_ranked_db(conn):
 
     conn.commit()
 
+
+def setup_qualifier_db(conn):
+    c = conn.cursor()
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS qualifier_matchups (
+            id SERIAL PRIMARY KEY,
+            player1 TEXT NOT NULL,
+            player2 TEXT NOT NULL,
+            played BOOLEAN DEFAULT FALSE,
+            winner TEXT,
+            score1 INTEGER,
+            score2 INTEGER,
+            date_played TEXT
+        )
+    """)
+    conn.commit()
+
+
 pending_ranked_scores = {}
 pending_ranked_undos = {}  # match_id -> {p1, p2, old_p1_elo, old_p2_elo, old_p1_wins, old_p1_losses, old_p1_draws, old_p2_wins, old_p2_losses, old_p2_draws, is_draw}
 active_matchmaking = {}
+pending_qualifier_scores = {}
 
 @tree.command(name="rankedregister", description="Register yourself for CFI Ranked")
 async def rankedregister(interaction: discord.Interaction):
@@ -2908,6 +2928,112 @@ async def on_interaction(interaction: discord.Interaction):
         del pending_ranked_scores[msg_id]
         await interaction.response.edit_message(content=f"🚫 Score rejected by **{interaction.user.display_name}**.", embed=None, view=None)
 
+    # ---- QUALIFIER CONFIRM ----
+    elif custom_id == "qualifier_confirm":
+        if msg_id not in pending_qualifier_scores:
+            await interaction.response.send_message("❌ This score submission has expired.", ephemeral=True)
+            return
+        data = pending_qualifier_scores[msg_id]
+        user_roles = [r.name for r in interaction.user.roles]
+        is_dev = "CFI - Dev" in user_roles
+        if not is_dev:
+            if str(uid) == str(data["submitter"]):
+                await interaction.response.send_message("❌ You can't confirm your own score submission!", ephemeral=True)
+                return
+            if str(uid) != str(data["player2"]):
+                await interaction.response.send_message("❌ Only the opponent can confirm this score.", ephemeral=True)
+                return
+
+        p1_id = data["player1"]
+        p2_id = data["player2"]
+        s1 = data["score1"]
+        s2 = data["score2"]
+        matchup_id = data["matchup_id"]
+
+        winner_id = p1_id if s1 > s2 else p2_id
+        loser_id  = p2_id if s1 > s2 else p1_id
+
+        conn = get_db()
+        c = conn.cursor()
+        c.execute("""
+            UPDATE qualifier_matchups
+            SET played = TRUE, winner = %s, score1 = %s, score2 = %s, date_played = %s
+            WHERE id = %s
+        """, (winner_id, s1, s2, datetime.now().isoformat(), matchup_id))
+        conn.commit()
+        conn.close()
+
+        del pending_qualifier_scores[msg_id]
+
+        winner_member = interaction.guild.get_member(int(winner_id))
+        loser_member  = interaction.guild.get_member(int(loser_id))
+        winner_name   = winner_member.display_name if winner_member else winner_id
+        loser_name    = loser_member.display_name  if loser_member  else loser_id
+
+        # Award CFI-Participant role to winner
+        participant_role = discord.utils.get(interaction.guild.roles, name="CFI-Participant")
+        if participant_role and winner_member:
+            try:
+                await winner_member.add_roles(participant_role, reason="CFI Qualifier win")
+            except Exception as e:
+                print(f"Failed to add CFI-Participant role: {e}")
+
+        # Generate banner
+        banner_file = None
+        try:
+            async with aiohttp.ClientSession() as session:
+                winner_av_bytes = await fetch_avatar(session, winner_member.display_avatar.url) if winner_member else None
+                loser_av_bytes  = await fetch_avatar(session, loser_member.display_avatar.url)  if loser_member  else None
+            banner_io = generate_ranked_banner(
+                winner_name=winner_name, loser_name=loser_name,
+                score_winner=max(s1, s2), score_loser=min(s1, s2),
+                winner_elo=0, loser_elo=0,
+                elo_gain=0, elo_loss=0,
+                winner_rank="", loser_rank="",
+                winner_avatar_bytes=winner_av_bytes, loser_avatar_bytes=loser_av_bytes,
+            )
+            banner_file = discord.File(banner_io, filename="qualifier_result.png")
+        except Exception as e:
+            print(f"Qualifier banner error: {e}")
+
+        embed = discord.Embed(title="✅ Qualifier Result Confirmed!", color=0x00ff88)
+        embed.description = (
+            f"<@{winner_id}> **{max(s1,s2)} - {min(s1,s2)}** <@{loser_id}>\n\n"
+            f"🏆 **{winner_name}** wins!\n\n"
+            f"🎉 **{winner_name}** is officially qualified for the **CFI League**!"
+        )
+        embed.set_footer(text=f"Confirmed by {interaction.user.display_name}")
+
+        if banner_file:
+            embed.set_image(url="attachment://qualifier_result.png")
+            await interaction.response.edit_message(embed=embed, attachments=[banner_file], view=None)
+        else:
+            await interaction.response.edit_message(embed=embed, view=None)
+
+    # ---- QUALIFIER DENY ----
+    elif custom_id == "qualifier_deny":
+        if msg_id not in pending_qualifier_scores:
+            await interaction.response.send_message("❌ This score submission has expired.", ephemeral=True)
+            return
+        data = pending_qualifier_scores[msg_id]
+        if str(uid) != str(data["player2"]):
+            await interaction.response.send_message("❌ Only the opponent can deny this score.", ephemeral=True)
+            return
+        del pending_qualifier_scores[msg_id]
+        await interaction.response.edit_message(content="❌ Score denied by opponent.", embed=None, view=None)
+
+    # ---- QUALIFIER REJECT (MOD) ----
+    elif custom_id == "qualifier_reject":
+        if msg_id not in pending_qualifier_scores:
+            await interaction.response.send_message("❌ This score submission has expired.", ephemeral=True)
+            return
+        allowed = ADMIN_ROLES + ["League Moderator (crew)", "Moderator (crew)"]
+        if not any(r.name in allowed for r in interaction.user.roles):
+            await interaction.response.send_message("❌ Only admins and mods can reject scores.", ephemeral=True)
+            return
+        del pending_qualifier_scores[msg_id]
+        await interaction.response.edit_message(content=f"🚫 Score rejected by **{interaction.user.display_name}**.", embed=None, view=None)
+
 
 @tree.command(name="rankedsetstats", description="Manually update a player's ranked stats (admin only)")
 @is_admin()
@@ -3527,6 +3653,192 @@ async def rankedphenomenonmatches(interaction: discord.Interaction):
         lines.append(f"• **{scorer_name}** scoorde **{row['scored']}** goals vs {opp_name} ({row['scored']}-{row['conceded']}) — {date_str}")
 
     await interaction.followup.send("\n".join(lines), ephemeral=True)
+
+
+# ─────────────────────────────────────────
+# QUALIFIER SYSTEM
+# ─────────────────────────────────────────
+
+@tree.command(name="qualifiermatchups", description="Generate random qualifier matchups from CFI-Qualifier members (admin only)")
+@is_admin()
+async def qualifiermatchups(interaction: discord.Interaction):
+    await interaction.response.defer()
+
+    role = discord.utils.get(interaction.guild.roles, name="CFI-Qualifier")
+    if not role:
+        await interaction.followup.send("❌ Role **CFI-Qualifier** not found on this server.")
+        return
+
+    members = [m for m in interaction.guild.members if role in m.roles]
+    if len(members) < 2:
+        await interaction.followup.send("❌ Not enough players with the **CFI-Qualifier** role to generate matchups.")
+        return
+
+    import random
+    random.shuffle(members)
+
+    bye_player = None
+    if len(members) % 2 != 0:
+        bye_player = members.pop()
+
+    pairs = [(members[i], members[i + 1]) for i in range(0, len(members), 2)]
+
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("DELETE FROM qualifier_matchups WHERE played = FALSE")
+    for p1, p2 in pairs:
+        c.execute("INSERT INTO qualifier_matchups (player1, player2) VALUES (%s, %s)",
+                  (str(p1.id), str(p2.id)))
+    conn.commit()
+    conn.close()
+
+    lines = [f"**{i+1}.** {p1.display_name} **vs** {p2.display_name}" for i, (p1, p2) in enumerate(pairs)]
+
+    embeds = []
+    chunk_size = 20
+    chunks = [lines[i:i + chunk_size] for i in range(0, len(lines), chunk_size)]
+    for page, chunk in enumerate(chunks):
+        embed = discord.Embed(
+            title=f"🎲 CFI Qualifier Matchups — {len(pairs)} matches" + (f" (page {page+1}/{len(chunks)})" if len(chunks) > 1 else ""),
+            color=0x5865F2
+        )
+        embed.add_field(name="Matchups", value="\n".join(chunk), inline=False)
+        if bye_player and page == len(chunks) - 1:
+            embed.set_footer(text=f"⚠️ {bye_player.display_name} has a bye (odd number of players)")
+        embeds.append(embed)
+
+    await interaction.followup.send(embeds=embeds[:10])
+
+
+@tree.command(name="qualifierbracket", description="View all CFI Qualifier matchups")
+async def qualifierbracket(interaction: discord.Interaction):
+    await interaction.response.defer()
+
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT * FROM qualifier_matchups ORDER BY id ASC")
+    matchups = [dict(m) for m in c.fetchall()]
+    conn.close()
+
+    if not matchups:
+        await interaction.followup.send("❌ No qualifier matchups found. Use **/qualifiermatchups** to generate them.")
+        return
+
+    total = len(matchups)
+    played = sum(1 for m in matchups if m["played"])
+
+    lines = []
+    for m in matchups:
+        p1_member = interaction.guild.get_member(int(m["player1"]))
+        p2_member = interaction.guild.get_member(int(m["player2"]))
+        p1_name = p1_member.display_name if p1_member else m["player1"]
+        p2_name = p2_member.display_name if p2_member else m["player2"]
+        if m["played"]:
+            winner_member = interaction.guild.get_member(int(m["winner"])) if m["winner"] else None
+            winner_name = winner_member.display_name if winner_member else m["winner"]
+            lines.append(f"✅ {p1_name} **{m['score1']}–{m['score2']}** {p2_name} *(🏆 {winner_name})*")
+        else:
+            lines.append(f"⏳ **{p1_name}** vs **{p2_name}**")
+
+    embeds = []
+    chunk_size = 15
+    chunks = [lines[i:i + chunk_size] for i in range(0, len(lines), chunk_size)]
+    for page, chunk in enumerate(chunks):
+        embed = discord.Embed(
+            title=f"🏆 CFI Qualifier Bracket — {played}/{total} played" + (f" (page {page+1}/{len(chunks)})" if len(chunks) > 1 else ""),
+            color=0x00ff88
+        )
+        embed.add_field(name="Matches", value="\n".join(chunk), inline=False)
+        embeds.append(embed)
+
+    await interaction.followup.send(embeds=embeds[:10])
+
+
+@tree.command(name="qualifierscore", description="Submit a CFI Qualifier match score")
+@app_commands.describe(opponent="Your opponent", goals_you="Your goals", goals_opponent="Opponent's goals")
+async def qualifierscore(interaction: discord.Interaction, opponent: discord.Member, goals_you: int, goals_opponent: int):
+    await interaction.response.defer()
+
+    if interaction.channel.name not in ["qualifier-result", "qualifier-results", "test"]:
+        await interaction.followup.send("❌ This command can only be used in **#qualifier-result**!", ephemeral=True)
+        return
+
+    if goals_you == goals_opponent:
+        await interaction.followup.send("❌ Draws are not allowed in the qualifier — there must be a winner!", ephemeral=True)
+        return
+
+    uid = str(interaction.user.id)
+    opp_uid = str(opponent.id)
+
+    if uid == opp_uid:
+        await interaction.followup.send("❌ You can't submit a score against yourself!", ephemeral=True)
+        return
+
+    qualifier_role = discord.utils.get(interaction.guild.roles, name="CFI-Qualifier")
+    if qualifier_role:
+        if qualifier_role not in interaction.user.roles:
+            await interaction.followup.send("❌ You don't have the **CFI-Qualifier** role!", ephemeral=True)
+            return
+        if qualifier_role not in opponent.roles:
+            await interaction.followup.send(f"❌ **{opponent.display_name}** doesn't have the **CFI-Qualifier** role!", ephemeral=True)
+            return
+
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("""
+        SELECT id FROM qualifier_matchups
+        WHERE ((player1 = %s AND player2 = %s) OR (player1 = %s AND player2 = %s))
+        AND played = FALSE
+        LIMIT 1
+    """, (uid, opp_uid, opp_uid, uid))
+    matchup = c.fetchone()
+    conn.close()
+
+    if not matchup:
+        await interaction.followup.send(
+            f"❌ No active qualifier matchup found between you and **{opponent.display_name}**.",
+            ephemeral=True
+        )
+        return
+
+    embed = discord.Embed(title="⚽ Qualifier Score Submission", color=0xff9900)
+    embed.description = (
+        f"**{interaction.user.display_name}** {goals_you} — {goals_opponent} **{opponent.display_name}**\n\n"
+        f"<@{opp_uid}> please confirm this score!"
+    )
+    embed.set_footer(text=f"Submitted by {interaction.user.display_name}")
+
+    view = discord.ui.View(timeout=300)
+    view.add_item(discord.ui.Button(label="✅ Confirm", style=discord.ButtonStyle.green, custom_id="qualifier_confirm"))
+    view.add_item(discord.ui.Button(label="❌ Deny", style=discord.ButtonStyle.red, custom_id="qualifier_deny"))
+    view.add_item(discord.ui.Button(label="🚫 Reject (Mod)", style=discord.ButtonStyle.grey, custom_id="qualifier_reject"))
+
+    msg = await interaction.followup.send(embed=embed, view=view, allowed_mentions=discord.AllowedMentions(users=True))
+    pending_qualifier_scores[msg.id] = {
+        "player1": uid,
+        "player2": opp_uid,
+        "score1": goals_you,
+        "score2": goals_opponent,
+        "submitter": uid,
+        "matchup_id": dict(matchup)["id"],
+    }
+
+    async def on_timeout_qualifier(message_id, channel):
+        await asyncio.sleep(300)
+        if message_id in pending_qualifier_scores:
+            del pending_qualifier_scores[message_id]
+            try:
+                msg_obj = await channel.fetch_message(message_id)
+                expired_embed = discord.Embed(
+                    title="❌ Score Submission Expired",
+                    description="This score submission was not confirmed in time.",
+                    color=0xff4444,
+                )
+                await msg_obj.edit(embed=expired_embed, view=None)
+            except Exception:
+                pass
+
+    asyncio.ensure_future(on_timeout_qualifier(msg.id, interaction.channel))
 
 
 bot.run(BOT_TOKEN)
