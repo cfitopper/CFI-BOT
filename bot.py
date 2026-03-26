@@ -3938,16 +3938,22 @@ async def qualifymatch(interaction: discord.Interaction):
     matchup = dict(matchup)
     opponent_id = matchup["player2"] if matchup["player1"] == uid else matchup["player1"]
     opponent_member = interaction.guild.get_member(int(opponent_id))
+    opponent_name = opponent_member.display_name if opponent_member else opponent_id
 
     embed = discord.Embed(title="⚽ Your CFI Qualifier Opponent", color=0x5865F2)
     embed.description = (
-        f"Your opponent is <@{opponent_id}>!\n\n"
+        f"**{opponent_name}**\n\n"
         f"Contact them to schedule your match and submit the result with **/qualifierscore**."
     )
     if opponent_member:
         embed.set_thumbnail(url=opponent_member.display_avatar.url)
 
-    await interaction.response.send_message(embed=embed, ephemeral=True, allowed_mentions=discord.AllowedMentions(users=True))
+    await interaction.response.send_message(
+        content=f"Your qualifier opponent is <@{opponent_id}>!",
+        embed=embed,
+        ephemeral=True,
+        allowed_mentions=discord.AllowedMentions(users=True)
+    )
 
 
 @tree.command(name="qualifiersetscore", description="Manually set a qualifier match score (mods only)")
