@@ -3909,6 +3909,7 @@ async def qualifierrevertscore(interaction: discord.Interaction, player1: discor
 
 
 @tree.command(name="qualifymatch", description="Find out who your CFI Qualifier opponent is")
+@app_commands.default_permissions(send_messages=True)
 async def qualifymatch(interaction: discord.Interaction):
     uid = str(interaction.user.id)
 
