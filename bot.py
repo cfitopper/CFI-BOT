@@ -1616,6 +1616,37 @@ async def showscores(interaction: discord.Interaction, tier: str):
 
     await interaction.followup.send(embed=embed)
 
+@tree.command(name="showqualifierplayers", description="Show all players with the CFI-Participant role")
+async def showqualifierplayers(interaction: discord.Interaction):
+    await interaction.response.defer()
+
+    role = discord.utils.get(interaction.guild.roles, name="CFI-Participant")
+    if role is None:
+        await interaction.followup.send("❌ Role **CFI-Participant** not found on this server.")
+        return
+
+    members = sorted(role.members, key=lambda m: m.display_name.lower())
+    if not members:
+        await interaction.followup.send("No players currently have the **CFI-Participant** role.")
+        return
+
+    lines = [f"{i+1}. {m.display_name}" for i, m in enumerate(members)]
+
+    # Split into chunks of 25 per embed field to stay within Discord limits
+    chunk_size = 25
+    chunks = [lines[i:i+chunk_size] for i in range(0, len(lines), chunk_size)]
+
+    embed = discord.Embed(
+        title=f"🏆 CFI Qualifier Players ({len(members)})",
+        color=0x00ff88
+    )
+    for idx, chunk in enumerate(chunks):
+        field_name = "Players" if len(chunks) == 1 else f"Players ({idx*chunk_size+1}–{idx*chunk_size+len(chunk)})"
+        embed.add_field(name=field_name, value="\n".join(chunk), inline=False)
+
+    await interaction.followup.send(embed=embed)
+
+
 @tree.command(name="log", description="View bot activity log for today (admin only)")
 @is_admin()
 async def log(interaction: discord.Interaction):
