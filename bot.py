@@ -3841,4 +3841,80 @@ async def qualifierscore(interaction: discord.Interaction, opponent: discord.Mem
     asyncio.ensure_future(on_timeout_qualifier(msg.id, interaction.channel))
 
 
+@tree.command(name="qualifierrevertmatchups", description="Delete all qualifier matchups so you can regenerate them (admin only)")
+@is_admin()
+async def qualifierrevertmatchups(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) AS total FROM qualifier_matchups")
+    total = c.fetchone()["total"]
+    c.execute("DELETE FROM qualifier_matchups")
+    conn.commit()
+    conn.close()
+
+    await interaction.followup.send(
+        f"🗑️ All **{total}** qualifier matchups have been deleted.\n"
+        f"Use **/qualifiermatchups** to generate a fresh set.",
+        ephemeral=True
+    )
+
+
+@tree.command(name="qualifierrevertscore", description="Revert the result of a qualifier match between two players (admin only)")
+@is_admin()
+@app_commands.describe(player1="First player", player2="Second player")
+async def qualifierrevertscore(interaction: discord.Interaction, player1: discord.Member, player2: discord.Member):
+    await interaction.response.defer(ephemeral=True)
+
+    p1_id = str(player1.id)
+    p2_id = str(player2.id)
+
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("""
+        SELECT * FROM qualifier_matchups
+        WHERE ((player1 = %s AND player2 = %s) OR (player1 = %s AND player2 = %s))
+        AND played = TRUE
+        ORDER BY id DESC LIMIT 1
+    """, (p1_id, p2_id, p2_id, p1_id))
+    match = c.fetchone()
+
+    if not match:
+        await interaction.followup.send(
+            f"❌ No played qualifier match found between **{player1.display_name}** and **{player2.display_name}**.",
+            ephemeral=True
+        )
+        conn.close()
+        return
+
+    match = dict(match)
+    winner_id = match["winner"]
+
+    # Reset the matchup back to unplayed
+    c.execute("""
+        UPDATE qualifier_matchups
+        SET played = FALSE, winner = NULL, score1 = NULL, score2 = NULL, date_played = NULL
+        WHERE id = %s
+    """, (match["id"],))
+    conn.commit()
+    conn.close()
+
+    # Remove CFI-Participant role from the winner
+    participant_role = discord.utils.get(interaction.guild.roles, name="CFI-Participant")
+    winner_member = interaction.guild.get_member(int(winner_id)) if winner_id else None
+    if participant_role and winner_member:
+        try:
+            await winner_member.remove_roles(participant_role, reason="Qualifier score reverted by admin")
+        except Exception as e:
+            print(f"Failed to remove CFI-Participant role: {e}")
+
+    winner_name = winner_member.display_name if winner_member else winner_id
+    await interaction.followup.send(
+        f"↩️ Qualifier result between **{player1.display_name}** and **{player2.display_name}** has been reverted.\n"
+        f"**{winner_name}**'s **CFI-Participant** role has been removed.",
+        ephemeral=True
+    )
+
+
 bot.run(BOT_TOKEN)
