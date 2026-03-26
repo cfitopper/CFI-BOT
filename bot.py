@@ -3910,22 +3910,20 @@ async def qualifierrevertscore(interaction: discord.Interaction, player1: discor
 
 @tree.command(name="qualifymatch", description="Find out who your CFI Qualifier opponent is")
 async def qualifymatch(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True)
-
     uid = str(interaction.user.id)
 
     conn = get_db()
     c = conn.cursor()
     c.execute("""
         SELECT * FROM qualifier_matchups
-        WHERE (player1 = %s OR player2 = %s) AND played = FALSE
+        WHERE (player1 = %s OR player2 = %s) AND NOT played
         LIMIT 1
     """, (uid, uid))
     matchup = c.fetchone()
     conn.close()
 
     if not matchup:
-        await interaction.followup.send(
+        await interaction.response.send_message(
             "❌ You have no active qualifier matchup. Either you haven't been drawn yet or your match has already been played.",
             ephemeral=True
         )
@@ -3936,16 +3934,14 @@ async def qualifymatch(interaction: discord.Interaction):
     opponent_member = interaction.guild.get_member(int(opponent_id))
 
     embed = discord.Embed(title="⚽ Your CFI Qualifier Opponent", color=0x5865F2)
+    embed.description = (
+        f"Your opponent is <@{opponent_id}>!\n\n"
+        f"Contact them to schedule your match and submit the result with **/qualifierscore**."
+    )
     if opponent_member:
-        embed.description = (
-            f"Your opponent is <@{opponent_id}>!\n\n"
-            f"Contact them to schedule your match and submit the result with **/qualifierscore**."
-        )
         embed.set_thumbnail(url=opponent_member.display_avatar.url)
-    else:
-        embed.description = f"Your opponent is <@{opponent_id}>."
 
-    await interaction.followup.send(embed=embed, ephemeral=True, allowed_mentions=discord.AllowedMentions(users=True))
+    await interaction.response.send_message(embed=embed, ephemeral=True, allowed_mentions=discord.AllowedMentions(users=True))
 
 
 @tree.command(name="qualifiersetscore", description="Manually set a qualifier match score (mods only)")
