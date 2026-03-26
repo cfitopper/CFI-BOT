@@ -3911,6 +3911,11 @@ async def qualifierrevertscore(interaction: discord.Interaction, player1: discor
 @tree.command(name="qualifymatch", description="Find out who your CFI Qualifier opponent is")
 @app_commands.default_permissions(send_messages=True)
 async def qualifymatch(interaction: discord.Interaction):
+    qualifier_role = discord.utils.get(interaction.guild.roles, name="CFI-Qualifier")
+    if not qualifier_role or qualifier_role not in interaction.user.roles:
+        await interaction.response.send_message("❌ You need the **CFI-Qualifier** role to use this command.", ephemeral=True)
+        return
+
     uid = str(interaction.user.id)
 
     conn = get_db()
