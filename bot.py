@@ -1625,6 +1625,8 @@ async def showqualifierplayers(interaction: discord.Interaction):
         await interaction.followup.send("❌ Role **CFI-Participant** not found on this server.")
         return
 
+    # Fetch all members to ensure the cache is complete
+    await interaction.guild.chunk()
     members = sorted(role.members, key=lambda m: m.display_name.lower())
     if not members:
         await interaction.followup.send("No players currently have the **CFI-Participant** role.")
