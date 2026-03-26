@@ -1616,13 +1616,13 @@ async def showscores(interaction: discord.Interaction, tier: str):
 
     await interaction.followup.send(embed=embed)
 
-@tree.command(name="showqualifierplayers", description="Show all players with the CFI-competitor role")
+@tree.command(name="showqualifierplayers", description="Show all players with the CFI-Qualifier role")
 async def showqualifierplayers(interaction: discord.Interaction):
     await interaction.response.defer()
 
-    role = discord.utils.get(interaction.guild.roles, name="CFI-competitor")
+    role = discord.utils.get(interaction.guild.roles, name="CFI-Qualifier")
     if role is None:
-        await interaction.followup.send("❌ Role **CFI-competitor** not found on this server.")
+        await interaction.followup.send("❌ Role **CFI-Qualifier** not found on this server.")
         return
 
     members = sorted(
@@ -1630,7 +1630,7 @@ async def showqualifierplayers(interaction: discord.Interaction):
         key=lambda m: m.display_name.lower()
     )
     if not members:
-        await interaction.followup.send("No players currently have the **CFI-competitor** role.")
+        await interaction.followup.send("No players currently have the **CFI-Qualifier** role.")
         return
 
     lines = [f"{i+1}. {m.display_name}" for i, m in enumerate(members)]
