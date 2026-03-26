@@ -3694,20 +3694,15 @@ async def qualifiermatchups(interaction: discord.Interaction):
 
     lines = [f"**{i+1}.** {p1.display_name} **vs** {p2.display_name}" for i, (p1, p2) in enumerate(pairs)]
 
-    embeds = []
-    chunk_size = 20
-    chunks = [lines[i:i + chunk_size] for i in range(0, len(lines), chunk_size)]
-    for page, chunk in enumerate(chunks):
-        embed = discord.Embed(
-            title=f"🎲 CFI Qualifier Matchups — {len(pairs)} matches" + (f" (page {page+1}/{len(chunks)})" if len(chunks) > 1 else ""),
-            color=0x5865F2
-        )
-        embed.add_field(name="Matchups", value="\n".join(chunk), inline=False)
-        if bye_player and page == len(chunks) - 1:
-            embed.set_footer(text=f"⚠️ {bye_player.display_name} has a bye (odd number of players)")
-        embeds.append(embed)
+    embed = discord.Embed(
+        title=f"🎲 CFI Qualifier Matchups — {len(pairs)} matches",
+        color=0x5865F2,
+        description="\n".join(lines)
+    )
+    if bye_player:
+        embed.set_footer(text=f"⚠️ {bye_player.display_name} has a bye (odd number of players)")
 
-    await interaction.followup.send(embeds=embeds[:10])
+    await interaction.followup.send(embed=embed)
 
 
 @tree.command(name="qualifierbracket", description="View all CFI Qualifier matchups")
@@ -3740,18 +3735,13 @@ async def qualifierbracket(interaction: discord.Interaction):
         else:
             lines.append(f"⏳ **{p1_name}** vs **{p2_name}**")
 
-    embeds = []
-    chunk_size = 15
-    chunks = [lines[i:i + chunk_size] for i in range(0, len(lines), chunk_size)]
-    for page, chunk in enumerate(chunks):
-        embed = discord.Embed(
-            title=f"🏆 CFI Qualifier Bracket — {played}/{total} played" + (f" (page {page+1}/{len(chunks)})" if len(chunks) > 1 else ""),
-            color=0x00ff88
-        )
-        embed.add_field(name="Matches", value="\n".join(chunk), inline=False)
-        embeds.append(embed)
+    embed = discord.Embed(
+        title=f"🏆 CFI Qualifier Bracket — {played}/{total} played",
+        color=0x00ff88,
+        description="\n".join(lines)
+    )
 
-    await interaction.followup.send(embeds=embeds[:10])
+    await interaction.followup.send(embed=embed)
 
 
 @tree.command(name="qualifierscore", description="Submit a CFI Qualifier match score")
