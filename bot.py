@@ -1668,13 +1668,13 @@ async def showcfiqualifiers(interaction: discord.Interaction):
         await interaction.followup.send("No players currently have the **CFI-Qualifier** role.")
         return
 
-    lines = [f"{i+1}. <@{m.id}>" for i, m in enumerate(members)]
+    lines = [f"{i+1}. {m.display_name}" for i, m in enumerate(members)]
     embed = discord.Embed(
         title=f"🎯 CFI Qualifiers ({len(members)})",
         color=0x5865F2,
         description="\n".join(lines)
     )
-    await interaction.followup.send(embed=embed, allowed_mentions=discord.AllowedMentions(users=True))
+    await interaction.followup.send(embed=embed)
 
 
 @tree.command(name="showcfiparticipants", description="Show all players with the CFI-Participant role with mentions")
@@ -1694,13 +1694,13 @@ async def showcfiparticipants(interaction: discord.Interaction):
         await interaction.followup.send("No players currently have the **CFI-Participant** role.")
         return
 
-    lines = [f"{i+1}. <@{m.id}>" for i, m in enumerate(members)]
+    lines = [f"{i+1}. {m.display_name}" for i, m in enumerate(members)]
     embed = discord.Embed(
         title=f"🏆 CFI Participants ({len(members)})",
         color=0x00ff88,
         description="\n".join(lines)
     )
-    await interaction.followup.send(embed=embed, allowed_mentions=discord.AllowedMentions(users=True))
+    await interaction.followup.send(embed=embed)
 
 
 @tree.command(name="log", description="View bot activity log for today (admin only)")
