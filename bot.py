@@ -1651,6 +1651,58 @@ async def showqualifierplayers(interaction: discord.Interaction):
     await interaction.followup.send(embed=embed)
 
 
+@tree.command(name="showcfiqualifiers", description="Show all players with the CFI-Qualifier role with mentions")
+async def showcfiqualifiers(interaction: discord.Interaction):
+    await interaction.response.defer()
+
+    role = discord.utils.get(interaction.guild.roles, name="CFI-Qualifier")
+    if role is None:
+        await interaction.followup.send("❌ Role **CFI-Qualifier** not found on this server.")
+        return
+
+    members = sorted(
+        [m for m in interaction.guild.members if role in m.roles],
+        key=lambda m: m.display_name.lower()
+    )
+    if not members:
+        await interaction.followup.send("No players currently have the **CFI-Qualifier** role.")
+        return
+
+    lines = [f"{i+1}. <@{m.id}>" for i, m in enumerate(members)]
+    embed = discord.Embed(
+        title=f"🎯 CFI Qualifiers ({len(members)})",
+        color=0x5865F2,
+        description="\n".join(lines)
+    )
+    await interaction.followup.send(embed=embed, allowed_mentions=discord.AllowedMentions(users=True))
+
+
+@tree.command(name="showcfiparticipants", description="Show all players with the CFI-Participant role with mentions")
+async def showcfiparticipants(interaction: discord.Interaction):
+    await interaction.response.defer()
+
+    role = discord.utils.get(interaction.guild.roles, name="CFI-Participant")
+    if role is None:
+        await interaction.followup.send("❌ Role **CFI-Participant** not found on this server.")
+        return
+
+    members = sorted(
+        [m for m in interaction.guild.members if role in m.roles],
+        key=lambda m: m.display_name.lower()
+    )
+    if not members:
+        await interaction.followup.send("No players currently have the **CFI-Participant** role.")
+        return
+
+    lines = [f"{i+1}. <@{m.id}>" for i, m in enumerate(members)]
+    embed = discord.Embed(
+        title=f"🏆 CFI Participants ({len(members)})",
+        color=0x00ff88,
+        description="\n".join(lines)
+    )
+    await interaction.followup.send(embed=embed, allowed_mentions=discord.AllowedMentions(users=True))
+
+
 @tree.command(name="log", description="View bot activity log for today (admin only)")
 @is_admin()
 async def log(interaction: discord.Interaction):
