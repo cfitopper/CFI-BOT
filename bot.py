@@ -495,24 +495,45 @@ async def addplayer(interaction: discord.Interaction, player: discord.Member, ti
 @is_admin()
 @app_commands.describe(player="Select a Discord user")
 async def removeplayer(interaction: discord.Interaction, player: discord.Member):
+    await interaction.response.defer(ephemeral=True)
     name = str(player.id)
     display = player.display_name
-    p = get_player(name)
-    if not p:
-        await interaction.response.send_message(f"❌ **{display}** not found!", ephemeral=True)
-        return
-    player_tier = p["tier"]
+
     conn = get_db()
     c = conn.cursor()
-    c.execute("DELETE FROM players WHERE name = %s", (name,))
-    c.execute("DELETE FROM overview_ranking WHERE player_id = %s", (name,))
-    c.execute("SELECT * FROM players WHERE tier = %s ORDER BY rank_in_tier ASC", (player_tier,))
-    remaining = [dict(p) for p in c.fetchall()]
-    for i, rp in enumerate(remaining):
-        c.execute("UPDATE players SET rank_in_tier = %s WHERE name = %s", (i + 1, rp["name"]))
+
+    # Remove from old players table
+    p = get_player(name)
+    if p:
+        player_tier = p["tier"]
+        c.execute("DELETE FROM players WHERE name = %s", (name,))
+        c.execute("DELETE FROM overview_ranking WHERE player_id = %s", (name,))
+        c.execute("SELECT * FROM players WHERE tier = %s ORDER BY rank_in_tier ASC", (player_tier,))
+        remaining = [dict(r) for r in c.fetchall()]
+        for i, rp in enumerate(remaining):
+            c.execute("UPDATE players SET rank_in_tier = %s WHERE name = %s", (i + 1, rp["name"]))
+
+    # Remove from CFI league system
+    c.execute("DELETE FROM cfi_players WHERE name = %s", (name,))
+
     conn.commit()
     conn.close()
-    await interaction.response.send_message(f"🗑️ **{display}** removed.")
+
+    # Remove CFI-Participant role and all tier roles
+    roles_to_remove = []
+    participant_role = discord.utils.get(interaction.guild.roles, name="CFI-Participant")
+    if participant_role and participant_role in player.roles:
+        roles_to_remove.append(participant_role)
+    for role in player.roles:
+        if role.name.startswith("Tier "):
+            roles_to_remove.append(role)
+    if roles_to_remove:
+        try:
+            await player.remove_roles(*roles_to_remove, reason="Removed from CFI by admin")
+        except Exception as e:
+            print(f"Failed to remove roles: {e}")
+
+    await interaction.followup.send(f"🗑️ **{display}** has been removed from CFI and all roles have been stripped.", ephemeral=True)
 
 @tree.command(name="unscore", description="Undo the last match between two players (admin only)")
 @can_score()
