@@ -23,8 +23,7 @@ BANNER_PATH = os.path.join(os.path.dirname(__file__), "cfi_banner.png")
 # ─────────────────────────────────────────
 
 GOLDEN_BOOT_TIERS = [
-    "Cosmic", "Universal", "Galaxy", "Global", "International",
-    "Elite 1", "Elite 2", "Elite 3"
+    "Cosmic", "Universal", "Galaxy"
 ]
 
 TIERS = [
@@ -141,6 +140,12 @@ def setup_db():
         )
     """)
     conn.commit()
+    # One-time reset of golden_boot_goals for Season 2
+    c.execute("SELECT value FROM bot_config WHERE key = 'golden_boot_reset_s2'")
+    if not c.fetchone():
+        c.execute("UPDATE players SET golden_boot_goals = 0")
+        c.execute("INSERT INTO bot_config (key, value) VALUES ('golden_boot_reset_s2', 'done')")
+        conn.commit()
     conn.close()
 
 # ─────────────────────────────────────────
@@ -1408,6 +1413,7 @@ async def on_ready():
         conn_r = get_db()
         setup_ranked_db(conn_r)
         setup_qualifier_db(conn_r)
+        setup_cfi_db(conn_r)
         c_r = conn_r.cursor()
         c_r.execute("SELECT value FROM bot_config WHERE key = 'ranked_reaction_msg_id'")
         row = c_r.fetchone()
@@ -1850,6 +1856,7 @@ pending_ranked_scores = {}
 pending_ranked_undos = {}  # match_id -> {p1, p2, old_p1_elo, old_p2_elo, old_p1_wins, old_p1_losses, old_p1_draws, old_p2_wins, old_p2_losses, old_p2_draws, is_draw}
 active_matchmaking = {}
 pending_qualifier_scores = {}
+pending_cfi_scores = {}
 
 @tree.command(name="rankedregister", description="Register yourself for CFI Ranked")
 async def rankedregister(interaction: discord.Interaction):
