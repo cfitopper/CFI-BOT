@@ -1873,6 +1873,137 @@ def setup_qualifier_db(conn):
     conn.commit()
 
 
+# ─────────────────────────────────────────
+# CFI LEAGUE SYSTEM — CONSTANTS & SETUP
+# ─────────────────────────────────────────
+
+CFI_LEAGUE_NAMES = {
+    1: "Cosmic", 2: "Universal", 3: "Galaxy",
+    4: "Global", 5: "International", 6: "Elite"
+}
+CFI_GLOBAL_POINTS = {
+    1: {"win": 75, "draw": 37},
+    2: {"win": 50, "draw": 25},
+    3: {"win": 35, "draw": 17},
+    4: {"win": 20, "draw": 10},
+    5: {"win": 10, "draw": 5},
+    6: {"win": 5,  "draw": 2},
+}
+CFI_MAX_WEEK_MATCHES = 4
+CFI_S1_TIER_TO_LEAGUE = {
+    "Cosmic": 1, "Universal": 2, "Galaxy": 3,
+    "Global": 4, "International": 5,
+    "Elite 1": 6, "Elite 2": 6, "Elite 3": 6,
+}
+
+
+def get_cfi_role_name(league: int, group: str) -> str:
+    return f"Tier {CFI_LEAGUE_NAMES[league]} {group}"
+
+
+def get_cfi_channel_name(league: int, group: str) -> str:
+    return f"{CFI_LEAGUE_NAMES[league].lower()}-tier-{group.lower()}"
+
+
+def cfi_get_week(conn) -> int:
+    c = conn.cursor()
+    c.execute("SELECT value FROM cfi_config WHERE key = 'current_week'")
+    row = c.fetchone()
+    return int(row["value"]) if row else 1
+
+
+def cfi_get_season(conn) -> int:
+    c = conn.cursor()
+    c.execute("SELECT value FROM cfi_config WHERE key = 'current_season'")
+    row = c.fetchone()
+    return int(row["value"]) if row else 2
+
+
+async def assign_cfi_role(guild, member, league: int, group: str):
+    new_role_name = get_cfi_role_name(league, group)
+    old_roles = [
+        r for r in member.roles
+        if any(r.name == get_cfi_role_name(l, g)
+               for l in CFI_LEAGUE_NAMES for g in ["A", "B", "C"])
+    ]
+    if old_roles:
+        try:
+            await member.remove_roles(*old_roles, reason="CFI tier update")
+        except Exception:
+            pass
+    new_role = discord.utils.get(guild.roles, name=new_role_name)
+    if new_role:
+        try:
+            await member.add_roles(new_role, reason="CFI tier update")
+        except Exception:
+            pass
+
+
+def setup_cfi_db(conn):
+    c = conn.cursor()
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS cfi_players (
+            name TEXT PRIMARY KEY,
+            league INTEGER DEFAULT 6,
+            group_letter TEXT DEFAULT 'A',
+            week_wins INTEGER DEFAULT 0,
+            week_draws INTEGER DEFAULT 0,
+            week_losses INTEGER DEFAULT 0,
+            week_goals_for INTEGER DEFAULT 0,
+            week_goals_against INTEGER DEFAULT 0,
+            week_points INTEGER DEFAULT 0,
+            first_points_ts TIMESTAMP,
+            global_points INTEGER DEFAULT 0,
+            all_time_wins INTEGER DEFAULT 0,
+            all_time_draws INTEGER DEFAULT 0,
+            all_time_losses INTEGER DEFAULT 0,
+            all_time_goals_for INTEGER DEFAULT 0,
+            all_time_goals_against INTEGER DEFAULT 0,
+            season INTEGER DEFAULT 2,
+            joined_at TIMESTAMP DEFAULT NOW()
+        )
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS cfi_matches (
+            id SERIAL PRIMARY KEY,
+            player1 TEXT,
+            player2 TEXT,
+            score1 INTEGER,
+            score2 INTEGER,
+            league INTEGER,
+            group_letter TEXT,
+            week INTEGER,
+            season INTEGER,
+            date TEXT,
+            submitted_by TEXT
+        )
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS cfi_config (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS cfi_snapshot (
+            name TEXT,
+            league INTEGER,
+            group_letter TEXT,
+            week_wins INTEGER,
+            week_draws INTEGER,
+            week_losses INTEGER,
+            week_goals_for INTEGER,
+            week_goals_against INTEGER,
+            week_points INTEGER,
+            first_points_ts TIMESTAMP,
+            snapshot_week INTEGER
+        )
+    """)
+    c.execute("INSERT INTO cfi_config (key, value) VALUES ('current_week', '1') ON CONFLICT DO NOTHING")
+    c.execute("INSERT INTO cfi_config (key, value) VALUES ('current_season', '2') ON CONFLICT DO NOTHING")
+    conn.commit()
+
+
 pending_ranked_scores = {}
 pending_ranked_undos = {}  # match_id -> {p1, p2, old_p1_elo, old_p2_elo, old_p1_wins, old_p1_losses, old_p1_draws, old_p2_wins, old_p2_losses, old_p2_draws, is_draw}
 active_matchmaking = {}
