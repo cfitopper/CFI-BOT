@@ -4137,13 +4137,28 @@ def cfi_sort_key(p):
     return (-p["week_points"], -gd, -p["week_goals_for"], ts)
 
 
+
+CFI_MOD_ROLES = ["CFI - Dev", "Admin", "BOSS", "Head-moderator (crew)", "Moderator (crew)", "League Moderator (crew)"]
+
+
+async def cfi_league_autocomplete(interaction: discord.Interaction, current: str):
+    options = [
+        ("Cosmic", "1"), ("Universal", "2"), ("Galaxy", "3"),
+        ("Global", "4"), ("International", "5"), ("Elite", "6"),
+    ]
+    return [
+        app_commands.Choice(name=name, value=value)
+        for name, value in options
+        if current.lower() in name.lower()
+    ]
+
+
 async def cfi_group_autocomplete(interaction: discord.Interaction, current: str):
     return [
         app_commands.Choice(name=g, value=g)
         for g in ["A", "B", "C"]
         if current.upper() in g
     ]
-
 
 @tree.command(name="cfitable", description="Show CFI standings for a league and group (mods only)")
 @app_commands.describe(league="Select a league", group="Select a group")
@@ -4246,20 +4261,6 @@ async def cfigroup(interaction: discord.Interaction):
     embed.description = "\n".join(lines)
     await interaction.response.send_message(embed=embed)
 
-
-CFI_MOD_ROLES = ["CFI - Dev", "Admin", "BOSS", "Head-moderator (crew)", "Moderator (crew)", "League Moderator (crew)"]
-
-
-async def cfi_league_autocomplete(interaction: discord.Interaction, current: str):
-    options = [
-        ("Cosmic", "1"), ("Universal", "2"), ("Galaxy", "3"),
-        ("Global", "4"), ("International", "5"), ("Elite", "6"),
-    ]
-    return [
-        app_commands.Choice(name=name, value=value)
-        for name, value in options
-        if current.lower() in name.lower()
-    ]
 
 
 @tree.command(name="cfigroups", description="Show all group standings for a CFI league (mods only)")
