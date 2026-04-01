@@ -1959,6 +1959,28 @@ def setup_cfi_db(conn):
     """)
     c.execute("INSERT INTO cfi_config (key, value) VALUES ('current_week', '1') ON CONFLICT DO NOTHING")
     c.execute("INSERT INTO cfi_config (key, value) VALUES ('current_season', '2') ON CONFLICT DO NOTHING")
+
+    # Migrations: add missing columns if table existed before they were added
+    migrations = [
+        ("all_time_wins",          "ALTER TABLE cfi_players ADD COLUMN all_time_wins INTEGER DEFAULT 0"),
+        ("all_time_draws",         "ALTER TABLE cfi_players ADD COLUMN all_time_draws INTEGER DEFAULT 0"),
+        ("all_time_losses",        "ALTER TABLE cfi_players ADD COLUMN all_time_losses INTEGER DEFAULT 0"),
+        ("all_time_goals_for",     "ALTER TABLE cfi_players ADD COLUMN all_time_goals_for INTEGER DEFAULT 0"),
+        ("all_time_goals_against", "ALTER TABLE cfi_players ADD COLUMN all_time_goals_against INTEGER DEFAULT 0"),
+        ("global_points",          "ALTER TABLE cfi_players ADD COLUMN global_points INTEGER DEFAULT 0"),
+        ("week_draws",             "ALTER TABLE cfi_players ADD COLUMN week_draws INTEGER DEFAULT 0"),
+        ("week_goals_for",         "ALTER TABLE cfi_players ADD COLUMN week_goals_for INTEGER DEFAULT 0"),
+        ("week_goals_against",     "ALTER TABLE cfi_players ADD COLUMN week_goals_against INTEGER DEFAULT 0"),
+        ("first_points_ts",        "ALTER TABLE cfi_players ADD COLUMN first_points_ts TIMESTAMP"),
+        ("season",                 "ALTER TABLE cfi_players ADD COLUMN season INTEGER DEFAULT 2"),
+    ]
+    for col, sql in migrations:
+        try:
+            c.execute(sql)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+
     conn.commit()
 
 
