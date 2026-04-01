@@ -3818,14 +3818,7 @@ async def cfiseasonstart(interaction: discord.Interaction):
     conn.commit()
     conn.close()
 
-    # Assign discord roles
-    failed = 0
-    for member, league, group in assignments:
-        try:
-            await assign_cfi_role(interaction.guild, member, league, group)
-        except Exception:
-            failed += 1
-
+    # Send response immediately, assign roles in background
     lines = []
     for league in range(1, 7):
         league_name = CFI_LEAGUE_NAMES[league]
@@ -3836,10 +3829,26 @@ async def cfiseasonstart(interaction: discord.Interaction):
 
     summary = "\n".join(lines) if lines else "No assignments made."
     await interaction.followup.send(
-        f"✅ CFI Season started! **{len(assignments)}** players distributed.\n\n{summary}"
-        + (f"\n\n⚠️ Failed to assign roles for {failed} players." if failed else ""),
+        f"✅ CFI Season started! **{len(assignments)}** players distributed. Assigning roles in background...\n\n{summary}",
         ephemeral=True
     )
+
+    # Assign roles after responding to avoid timeout
+    async def assign_roles_bg():
+        failed = 0
+        for member, league, group in assignments:
+            try:
+                await assign_cfi_role(interaction.guild, member, league, group)
+                await asyncio.sleep(0.1)  # small delay to avoid rate limits
+            except Exception:
+                failed += 1
+        if failed:
+            try:
+                await interaction.followup.send(f"⚠️ Failed to assign roles for {failed} players.", ephemeral=True)
+            except Exception:
+                pass
+
+    asyncio.ensure_future(assign_roles_bg())
 
 
 @tree.command(name="cfiscore", description="Submit your CFI match result")
@@ -4471,28 +4480,35 @@ async def cfiprocessweek(interaction: discord.Interaction):
     conn.commit()
     conn.close()
 
-    # Update Discord roles
-    failed = 0
-    for name, (new_league, new_group) in new_assignments.items():
-        if not name.isdigit():
-            continue
-        member = interaction.guild.get_member(int(name))
-        if member:
-            try:
-                await assign_cfi_role(interaction.guild, member, new_league, new_group)
-            except Exception:
-                failed += 1
-
     prom_count = len(promotions)
     rel_count = len(relegations)
 
     await interaction.followup.send(
         f"✅ **Week {week} processed!** Now starting **Week {new_week}**.\n"
         f"⬆️ {prom_count} players promoted · ⬇️ {rel_count} players relegated\n"
-        f"All players reshuffled into new groups. Weekly stats reset."
-        + (f"\n⚠️ Failed to update roles for {failed} players." if failed else ""),
+        f"All players reshuffled into new groups. Weekly stats reset. Assigning roles in background...",
         ephemeral=True
     )
+
+    async def assign_process_roles():
+        failed = 0
+        for name, (new_league, new_group) in new_assignments.items():
+            if not name.isdigit():
+                continue
+            member = interaction.guild.get_member(int(name))
+            if member:
+                try:
+                    await assign_cfi_role(interaction.guild, member, new_league, new_group)
+                    await asyncio.sleep(0.1)
+                except Exception:
+                    failed += 1
+        if failed:
+            try:
+                await interaction.followup.send(f"⚠️ Failed to update roles for {failed} players.", ephemeral=True)
+            except Exception:
+                pass
+
+    asyncio.ensure_future(assign_process_roles())
 
 
 @tree.command(name="cfirevertweek", description="Undo the last /cfiprocessweek (admin only)")
@@ -4536,25 +4552,32 @@ async def cfirevertweek(interaction: discord.Interaction):
     conn.commit()
     conn.close()
 
-    # Restore Discord roles
-    failed = 0
-    for s in snapshots:
-        name = s["name"]
-        if not name.isdigit():
-            continue
-        member = interaction.guild.get_member(int(name))
-        if member:
-            try:
-                await assign_cfi_role(interaction.guild, member, s["league"], s["group_letter"])
-            except Exception:
-                failed += 1
-
     await interaction.followup.send(
         f"↩️ Week reverted! Restored to **Week {prev_week}** state.\n"
-        f"All {len(snapshots)} players' stats and groups restored."
-        + (f"\n⚠️ Failed to update roles for {failed} players." if failed else ""),
+        f"All {len(snapshots)} players' stats and groups restored. Assigning roles in background...",
         ephemeral=True
     )
+
+    async def assign_revert_roles():
+        failed = 0
+        for s in snapshots:
+            name = s["name"]
+            if not name.isdigit():
+                continue
+            member = interaction.guild.get_member(int(name))
+            if member:
+                try:
+                    await assign_cfi_role(interaction.guild, member, s["league"], s["group_letter"])
+                    await asyncio.sleep(0.1)
+                except Exception:
+                    failed += 1
+        if failed:
+            try:
+                await interaction.followup.send(f"⚠️ Failed to update roles for {failed} players.", ephemeral=True)
+            except Exception:
+                pass
+
+    asyncio.ensure_future(assign_revert_roles())
 
 
 @tree.command(name="cfiaddplayer", description="Manually add a player to the CFI system (admin only)")
