@@ -4471,8 +4471,8 @@ async def cfiranking(interaction: discord.Interaction):
 
 @tree.command(name="cfiprofile", description="View a player's CFI profile")
 @app_commands.describe(player="Player to view (leave empty for yourself)")
-async def cfiprofile(interaction: discord.Interaction, player: discord.Member = None):
-    target = player or interaction.user
+async def cfiprofile(interaction: discord.Interaction, player: discord.Member):
+    target = player
     uid = str(target.id)
 
     conn = get_db()
