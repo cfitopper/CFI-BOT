@@ -2586,9 +2586,9 @@ async def on_interaction(interaction: discord.Interaction):
 
         mods_channel = discord.utils.get(interaction.guild.text_channels, name="ranked-score-mods")
         if mods_channel:
-            queue_str = "\n".join(f"- **{n}**" for n in queue_names) if queue_names else "*(leeg)*"
+            queue_str = "\n".join(f"- **{n}**" for n in queue_names) if queue_names else "*(empty)*"
             mm_embed = discord.Embed(title="🔍 Matchmaking Queue", color=0x5865F2)
-            mm_embed.description = f"**{interaction.user.display_name}** zoekt een match ({legs} leg{'s' if legs > 1 else ''})\n\n**In queue:**\n{queue_str}"
+            mm_embed.description = f"**{interaction.user.display_name}** is looking for a match ({legs} leg{'s' if legs > 1 else ''})\n\n**In queue:**\n{queue_str}"
             await mods_channel.send(embed=mm_embed)
         conn = get_db()
         log_matchmaking(conn, uid, "searching", legs=legs)
@@ -3155,7 +3155,7 @@ async def on_interaction(interaction: discord.Interaction):
     goals_for="New goals scored",
     goals_against="New goals conceded",
     current_losestreak="New current lose streak",
-    count_stats="Tellen stats mee voor deze speler? (yes/no)"
+    count_stats="Count stats for this player? (yes/no)"
 )
 async def rankedsetstats(interaction: discord.Interaction, player: discord.Member, elo: int = None, wins: int = None, losses: int = None, draws: int = None, current_winstreak: int = None, max_winstreak: int = None, goals_for: int = None, goals_against: int = None, current_losestreak: int = None, count_stats: str = None):
     uid = str(player.id)
@@ -3552,9 +3552,9 @@ async def rankedleaderboardsetup(interaction: discord.Interaction):
     await interaction.followup.send("✅ Leaderboard gepost en wordt elk uur geupdate!", ephemeral=True)
 
 
-@tree.command(name="rankedcheckchallenges", description="Check alle spelers en ken verdiende challenge rollen toe (admin only)")
+@tree.command(name="rankedcheckchallenges", description="Check all players and assign earned challenge roles (admin only)")
 async def rankedcheckchallenges(interaction: discord.Interaction):
-    await interaction.response.send_message("⚠️ Challenge rollen zijn momenteel uitgeschakeld.", ephemeral=True)
+    await interaction.response.send_message("⚠️ Challenge roles are currently disabled.", ephemeral=True)
     return
     await interaction.response.defer(ephemeral=True)
     if not any(r.name in ADMIN_ROLES for r in interaction.user.roles):
@@ -3695,7 +3695,7 @@ async def rankedsynctierroles(interaction: discord.Interaction):
             tier = get_ranked_rank(p["elo"])
             updated.append(f"{member.display_name} → {tier}")
 
-    summary = f"✅ **Tier rollen gesyncet voor {len(updated)} spelers**"
+    summary = f"✅ **Tier roles synced for {len(updated)} players**"
     if stripped:
         summary += f"\n🧹 Tier rol verwijderd bij {len(stripped)} niet-ranked leden"
     if skipped:
@@ -3731,7 +3731,7 @@ async def rankedphenomenonmatches(interaction: discord.Interaction):
 
     if not leaderboard_set:
         conn.close()
-        await interaction.followup.send("Geen leaderboard spelers gevonden.", ephemeral=True)
+        await interaction.followup.send("No leaderboard players found.", ephemeral=True)
         return
 
     placeholders = ",".join(["%s"] * len(leaderboard_set))
