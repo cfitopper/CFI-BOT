@@ -5153,4 +5153,105 @@ async def cfischedule(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed)
 
 
+@tree.command(name="cfidqplayer", description="DQ a player: void all their matches, reverse opponent stats, then remove them (admin only)")
+@is_admin()
+@app_commands.describe(player="Player to disqualify")
+async def cfidqplayer(interaction: discord.Interaction, player: discord.Member):
+    await interaction.response.defer(ephemeral=True)
+
+    uid = str(player.id)
+    conn = get_db()
+    c = conn.cursor()
+
+    c.execute("SELECT * FROM cfi_players WHERE name=%s", (uid,))
+    dq_player = c.fetchone()
+    if not dq_player:
+        conn.close()
+        await interaction.followup.send(f"❌ **{player.display_name}** is not in the CFI system.", ephemeral=True)
+        return
+
+    dq_player = dict(dq_player)
+    league = dq_player["league"]
+    group_letter = dq_player["group_letter"]
+    week = cfi_get_week(conn)
+    season = cfi_get_season(conn)
+    league_name = CFI_LEAGUE_NAMES[league]
+
+    # Fetch all matches involving this player this week
+    c.execute("""
+        SELECT * FROM cfi_matches
+        WHERE (player1=%s OR player2=%s) AND week=%s AND season=%s
+    """, (uid, uid, week, season))
+    matches = [dict(r) for r in c.fetchall()]
+
+    # Reverse stats for every opponent
+    for m in matches:
+        opp_id = m["player2"] if m["player1"] == uid else m["player1"]
+        # Determine what the opponent got from this match
+        if m["player1"] == uid:
+            opp_gf, opp_ga = m["score2"], m["score1"]
+            opp_won = m["score2"] > m["score1"]
+            opp_drew = m["score2"] == m["score1"]
+        else:
+            opp_gf, opp_ga = m["score1"], m["score2"]
+            opp_won = m["score1"] > m["score2"]
+            opp_drew = m["score1"] == m["score2"]
+
+        opp_pts = 3 if opp_won else (1 if opp_drew else 0)
+        count_global = (m["week"] >= 2)
+        gpts = (CFI_GLOBAL_POINTS[m["league"]]["win"] if opp_won else (CFI_GLOBAL_POINTS[m["league"]]["draw"] if opp_drew else 0)) if count_global else 0
+
+        c.execute("""
+            UPDATE cfi_players SET
+                week_wins=GREATEST(week_wins-%s,0),
+                week_draws=GREATEST(week_draws-%s,0),
+                week_losses=GREATEST(week_losses-%s,0),
+                week_goals_for=GREATEST(week_goals_for-%s,0),
+                week_goals_against=GREATEST(week_goals_against-%s,0),
+                week_points=GREATEST(week_points-%s,0),
+                all_time_wins=GREATEST(all_time_wins-%s,0),
+                all_time_draws=GREATEST(all_time_draws-%s,0),
+                all_time_losses=GREATEST(all_time_losses-%s,0),
+                all_time_goals_for=GREATEST(all_time_goals_for-%s,0),
+                all_time_goals_against=GREATEST(all_time_goals_against-%s,0),
+                global_points=GREATEST(global_points-%s,0)
+            WHERE name=%s
+        """, (
+            1 if opp_won else 0, 1 if opp_drew else 0, 1 if not opp_won and not opp_drew else 0,
+            opp_gf, opp_ga, opp_pts,
+            1 if opp_won else 0, 1 if opp_drew else 0, 1 if not opp_won and not opp_drew else 0,
+            opp_gf, opp_ga, gpts,
+            opp_id
+        ))
+
+    # Delete all their matches
+    c.execute("DELETE FROM cfi_matches WHERE (player1=%s OR player2=%s) AND week=%s AND season=%s",
+              (uid, uid, week, season))
+
+    # Remove from cfi_players
+    c.execute("DELETE FROM cfi_players WHERE name=%s", (uid,))
+    conn.commit()
+    conn.close()
+
+    # Strip CFI roles (Tier ... roles + CFI-Participant)
+    roles_to_remove = [
+        r for r in player.roles
+        if r.name == "CFI-Participant" or r.name.startswith("Tier ")
+    ]
+    if roles_to_remove:
+        try:
+            await player.remove_roles(*roles_to_remove, reason=f"DQ'd from CFI by {interaction.user.display_name}")
+        except Exception as e:
+            print(f"Failed to remove roles from DQ'd player: {e}")
+
+    voided = len(matches)
+    await interaction.followup.send(
+        f"🚫 **{player.display_name}** has been DQ'd from **{league_name} League — Group {group_letter}**.\n"
+        f"↩️ **{voided}** match(es) voided — opponent stats reversed.\n"
+        f"📈 Players below them in the standings now move up automatically.\n"
+        f"All CFI roles removed.",
+        ephemeral=True
+    )
+
+
 bot.run(BOT_TOKEN)
