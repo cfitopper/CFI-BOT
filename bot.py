@@ -3061,12 +3061,49 @@ async def on_interaction(interaction: discord.Interaction):
         )
         confirm_embed.set_footer(text=f"Confirmed by {interaction.user.display_name}")
 
-        await interaction.response.edit_message(
-            content=f"<@{p1_id}> vs <@{p2_id}>",
-            embed=confirm_embed,
-            view=None,
-            allowed_mentions=discord.AllowedMentions(users=True)
-        )
+        # Generate banner
+        winner_id = p1_id if s1 > s2 else (p2_id if s2 > s1 else p1_id)
+        loser_id  = p2_id if s1 > s2 else (p1_id if s2 > s1 else p2_id)
+        winner_member = interaction.guild.get_member(int(winner_id))
+        loser_member  = interaction.guild.get_member(int(loser_id))
+        w_name = winner_member.display_name if winner_member else winner_id
+        l_name = loser_member.display_name  if loser_member  else loser_id
+        score_w = max(s1, s2)
+        score_l = min(s1, s2)
+
+        banner_file = None
+        try:
+            async with aiohttp.ClientSession() as session:
+                w_av = await fetch_avatar(session, winner_member.display_avatar.url) if winner_member else None
+                l_av = await fetch_avatar(session, loser_member.display_avatar.url)  if loser_member  else None
+            banner_io = generate_ranked_banner(
+                winner_name=w_name, loser_name=l_name,
+                score_winner=score_w, score_loser=score_l,
+                winner_elo=0, loser_elo=0,
+                elo_gain=0, elo_loss=0,
+                winner_rank=league_name, loser_rank=league_name,
+                winner_avatar_bytes=w_av, loser_avatar_bytes=l_av,
+            )
+            banner_file = discord.File(banner_io, filename="cfi_result.png")
+            confirm_embed.set_image(url="attachment://cfi_result.png")
+        except Exception as e:
+            print(f"CFI banner error: {e}")
+
+        if banner_file:
+            await interaction.response.edit_message(
+                content=f"<@{p1_id}> vs <@{p2_id}>",
+                embed=confirm_embed,
+                attachments=[banner_file],
+                view=None,
+                allowed_mentions=discord.AllowedMentions(users=True)
+            )
+        else:
+            await interaction.response.edit_message(
+                content=f"<@{p1_id}> vs <@{p2_id}>",
+                embed=confirm_embed,
+                view=None,
+                allowed_mentions=discord.AllowedMentions(users=True)
+            )
 
         # Log to #score-mod
         score_mod = discord.utils.get(interaction.guild.text_channels, name="score-mod")
@@ -4205,7 +4242,9 @@ async def cfileague(interaction: discord.Interaction, league: int):
             name = member.display_name if member else p["name"]
             gd = p["week_goals_for"] - p["week_goals_against"]
             gd_str = f"+{gd}" if gd > 0 else str(gd)
-            lines.append(f"**{i}.** {name}\n{p['week_points']}pts | W{p['week_wins']} D{p['week_draws']} L{p['week_losses']} | GD{gd_str}")
+            total = p["week_wins"] + p["week_draws"] + p["week_losses"]
+            wr = f"{round(p['week_wins']/total*100)}%" if total > 0 else "0%"
+            lines.append(f"**{i}.** {name}\n{p['week_points']}pts | W{p['week_wins']}D{p['week_draws']}L{p['week_losses']} {wr} | GD{gd_str} GF{p['week_goals_for']}")
         embed.add_field(name=f"Group {group_letter}", value="\n".join(lines), inline=True)
 
     await interaction.response.send_message(embed=embed)
@@ -4244,7 +4283,9 @@ async def cfistandingsall(interaction: discord.Interaction):
             name = member.display_name if member else p["name"]
             gd = p["week_goals_for"] - p["week_goals_against"]
             gd_str = f"+{gd}" if gd > 0 else str(gd)
-            lines.append(f"**{i}.** {name} — {p['week_points']}pts GD{gd_str}")
+            total = p["week_wins"] + p["week_draws"] + p["week_losses"]
+            wr = f"{round(p['week_wins']/total*100)}%" if total > 0 else "0%"
+            lines.append(f"**{i}.** {name} — {p['week_points']}pts | W{p['week_wins']}D{p['week_draws']}L{p['week_losses']} {wr} | GD{gd_str} GF{p['week_goals_for']}")
 
         if field_count >= 25:
             embeds.append(embed)
