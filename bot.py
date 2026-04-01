@@ -4683,67 +4683,72 @@ async def cfiaddplayer(interaction: discord.Interaction, player: discord.Member,
     )
 
 
-@tree.command(name="cfischedule", description="Show remaining unplayed matches in your CFI group")
-async def cfischedule(interaction: discord.Interaction):
-    uid = str(interaction.user.id)
+@tree.command(name="cfischedule", description="Show remaining unplayed matches for a CFI league (mods only)")
+@app_commands.describe(league="Select a league")
+@app_commands.autocomplete(league=cfi_league_autocomplete)
+async def cfischedule(interaction: discord.Interaction, league: str):
+    user_roles = [r.name for r in interaction.user.roles]
+    if not any(r in user_roles for r in CFI_MOD_ROLES):
+        await interaction.response.send_message("❌ You don't have permission to use this command.", ephemeral=True)
+        return
+
+    try:
+        league_num = int(league)
+    except ValueError:
+        await interaction.response.send_message("❌ Invalid league.", ephemeral=True)
+        return
+
+    if league_num not in CFI_LEAGUE_NAMES:
+        await interaction.response.send_message("❌ Invalid league.", ephemeral=True)
+        return
+
+    await interaction.response.defer()
+
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT * FROM cfi_players WHERE name=%s", (uid,))
-    me = c.fetchone()
-
-    if not me:
-        conn.close()
-        await interaction.response.send_message("❌ You are not in the CFI system.", ephemeral=True)
-        return
-
-    me = dict(me)
-    league = me["league"]
-    group_letter = me["group_letter"]
     week = cfi_get_week(conn)
     season = cfi_get_season(conn)
+    league_name = CFI_LEAGUE_NAMES[league_num]
 
-    c.execute("SELECT name FROM cfi_players WHERE league=%s AND group_letter=%s", (league, group_letter))
-    group_players = [dict(r)["name"] for r in c.fetchall()]
-
-    # All possible pairs
     from itertools import combinations
-    all_pairs = list(combinations(group_players, 2))
 
-    # Already played this week
-    c.execute("""
-        SELECT player1, player2 FROM cfi_matches
-        WHERE league=%s AND group_letter=%s AND week=%s AND season=%s
-    """, (league, group_letter, week, season))
-    played_pairs = set()
-    for row in c.fetchall():
-        row = dict(row)
-        played_pairs.add(tuple(sorted([row["player1"], row["player2"]])))
+    embed = discord.Embed(title=f"📅 {league_name} League — Week {week} Remaining Matches", color=0x5865F2)
+    description_lines = []
+
+    for group_letter in ["A", "B", "C"]:
+        c.execute("SELECT name FROM cfi_players WHERE league=%s AND group_letter=%s", (league_num, group_letter))
+        group_players = [dict(r)["name"] for r in c.fetchall()]
+        if not group_players:
+            continue
+
+        all_pairs = list(combinations(group_players, 2))
+
+        c.execute("""
+            SELECT player1, player2 FROM cfi_matches
+            WHERE league=%s AND group_letter=%s AND week=%s AND season=%s
+        """, (league_num, group_letter, week, season))
+        played_pairs = set()
+        for row in c.fetchall():
+            row = dict(row)
+            played_pairs.add(tuple(sorted([row["player1"], row["player2"]])))
+
+        remaining = [p for p in all_pairs if tuple(sorted(p)) not in played_pairs]
+
+        description_lines.append(f"**Group {group_letter}**")
+        if not remaining:
+            description_lines.append("✅ All matches played!")
+        else:
+            for p1_id, p2_id in remaining:
+                m1 = interaction.guild.get_member(int(p1_id)) if p1_id.isdigit() else None
+                m2 = interaction.guild.get_member(int(p2_id)) if p2_id.isdigit() else None
+                n1 = m1.display_name if m1 else p1_id
+                n2 = m2.display_name if m2 else p2_id
+                description_lines.append(f"⚽ **{n1}** vs **{n2}**")
+        description_lines.append("")
 
     conn.close()
-
-    remaining = [p for p in all_pairs if tuple(sorted(p)) not in played_pairs]
-    league_name = CFI_LEAGUE_NAMES[league]
-
-    if not remaining:
-        embed = discord.Embed(title=f"📅 {league_name} Group {group_letter} — Week {week}", color=0x5865F2)
-        embed.description = "✅ All matches in your group have been played this week!"
-        await interaction.response.send_message(embed=embed)
-        return
-
-    lines = []
-    for p1_id, p2_id in remaining:
-        m1 = interaction.guild.get_member(int(p1_id)) if p1_id.isdigit() else None
-        m2 = interaction.guild.get_member(int(p2_id)) if p2_id.isdigit() else None
-        n1 = m1.display_name if m1 else p1_id
-        n2 = m2.display_name if m2 else p2_id
-        lines.append(f"⚽ **{n1}** vs **{n2}**")
-
-    embed = discord.Embed(
-        title=f"📅 {league_name} Group {group_letter} — Week {week} Remaining",
-        color=0x5865F2
-    )
-    embed.description = "\n".join(lines)
-    await interaction.response.send_message(embed=embed)
+    embed.description = "\n".join(description_lines)
+    await interaction.followup.send(embed=embed)
 
 
 @tree.command(name="cfiremoveplayer", description="Remove a player from CFI: delete their matches and remove them (admin only)")
