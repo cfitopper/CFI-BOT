@@ -4225,9 +4225,77 @@ async def cfigroup(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed)
 
 
-@tree.command(name="cfileague", description="Show all 3 group standings for a specific CFI league")
-@app_commands.describe(league="League number (1=Cosmic, 2=Universal, 3=Galaxy, 4=Global, 5=International, 6=Elite)")
-async def cfileague(interaction: discord.Interaction, league: int):
+CFI_MOD_ROLES = ["CFI - Dev", "Admin", "BOSS", "Head-moderator (crew)", "Moderator (crew)", "League Moderator (crew)"]
+
+
+async def cfi_league_autocomplete(interaction: discord.Interaction, current: str):
+    options = [
+        ("Cosmic", "1"), ("Universal", "2"), ("Galaxy", "3"),
+        ("Global", "4"), ("International", "5"), ("Elite", "6"),
+    ]
+    return [
+        app_commands.Choice(name=name, value=value)
+        for name, value in options
+        if current.lower() in name.lower()
+    ]
+
+
+@tree.command(name="cfigroups", description="Show all group standings for a CFI league (mods only)")
+@app_commands.describe(league="Select a league")
+@app_commands.autocomplete(league=cfi_league_autocomplete)
+async def cfigroups(interaction: discord.Interaction, league: str):
+    user_roles = [r.name for r in interaction.user.roles]
+    if not any(r in user_roles for r in CFI_MOD_ROLES):
+        await interaction.response.send_message("❌ You don't have permission to use this command.", ephemeral=True)
+        return
+
+    try:
+        league_num = int(league)
+    except ValueError:
+        await interaction.response.send_message("❌ Invalid league.", ephemeral=True)
+        return
+
+    if league_num not in CFI_LEAGUE_NAMES:
+        await interaction.response.send_message("❌ Invalid league.", ephemeral=True)
+        return
+
+    conn = get_db()
+    c = conn.cursor()
+    week = cfi_get_week(conn)
+    c.execute("SELECT * FROM cfi_players WHERE league=%s ORDER BY group_letter, week_points DESC", (league_num,))
+    all_players = [dict(p) for p in c.fetchall()]
+    conn.close()
+
+    if not all_players:
+        await interaction.response.send_message("❌ No players found in this league.", ephemeral=True)
+        return
+
+    league_name = CFI_LEAGUE_NAMES[league_num]
+    embed = discord.Embed(title=f"📊 {league_name} League — Week {week}", color=0x5865F2)
+    description_lines = []
+
+    for group_letter in ["A", "B", "C"]:
+        players = [p for p in all_players if p["group_letter"] == group_letter]
+        if not players:
+            continue
+        players.sort(key=cfi_sort_key)
+        description_lines.append(f"**Group {group_letter}**")
+        for i, p in enumerate(players, 1):
+            member = interaction.guild.get_member(int(p["name"])) if p["name"].isdigit() else None
+            name = member.display_name if member else p["name"]
+            gd = p["week_goals_for"] - p["week_goals_against"]
+            gd_str = f"+{gd}" if gd > 0 else str(gd)
+            total = p["week_wins"] + p["week_draws"] + p["week_losses"]
+            wr = f"{round(p['week_wins']/total*100)}%" if total > 0 else "0%"
+            description_lines.append(
+                f"**{i}.** {name} — {p['week_points']}pts | W{p['week_wins']}D{p['week_draws']}L{p['week_losses']} {wr} | GD{gd_str} GF{p['week_goals_for']}"
+            )
+        description_lines.append("")
+
+    embed.description = "\n".join(description_lines)
+    await interaction.response.send_message(embed=embed)
+
+
     if league not in CFI_LEAGUE_NAMES:
         await interaction.response.send_message("❌ Invalid league (1-6).", ephemeral=True)
         return
