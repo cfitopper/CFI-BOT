@@ -1983,6 +1983,29 @@ def setup_cfi_db(conn):
 
     conn.commit()
 
+    # Recalculate all_time stats from cfi_matches (fixes missing stats from before migration)
+    c.execute("SELECT name FROM cfi_players")
+    all_players = [dict(r)["name"] for r in c.fetchall()]
+    for name in all_players:
+        c.execute("""
+            SELECT
+                COUNT(*) FILTER (WHERE (player1=%s AND score1>score2) OR (player2=%s AND score2>score1)) AS wins,
+                COUNT(*) FILTER (WHERE score1=score2) AS draws,
+                COUNT(*) FILTER (WHERE (player1=%s AND score1<score2) OR (player2=%s AND score2<score1)) AS losses,
+                COALESCE(SUM(CASE WHEN player1=%s THEN score1 WHEN player2=%s THEN score2 END),0) AS gf,
+                COALESCE(SUM(CASE WHEN player1=%s THEN score2 WHEN player2=%s THEN score1 END),0) AS ga
+            FROM cfi_matches
+            WHERE player1=%s OR player2=%s
+        """, (name, name, name, name, name, name, name, name, name, name))
+        row = dict(c.fetchone())
+        c.execute("""
+            UPDATE cfi_players SET
+                all_time_wins=%s, all_time_draws=%s, all_time_losses=%s,
+                all_time_goals_for=%s, all_time_goals_against=%s
+            WHERE name=%s
+        """, (row["wins"], row["draws"], row["losses"], row["gf"], row["ga"], name))
+    conn.commit()
+
 
 pending_ranked_scores = {}
 pending_ranked_undos = {}  # match_id -> {p1, p2, old_p1_elo, old_p2_elo, old_p1_wins, old_p1_losses, old_p1_draws, old_p2_wins, old_p2_losses, old_p2_draws, is_draw}
