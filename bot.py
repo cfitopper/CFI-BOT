@@ -4137,18 +4137,38 @@ def cfi_sort_key(p):
     return (-p["week_points"], -gd, -p["week_goals_for"], ts)
 
 
-@tree.command(name="cfitable", description="Show CFI standings for a league and group")
-@app_commands.describe(league="League number (1-6)", group="Group letter (A/B/C)")
-async def cfitable(interaction: discord.Interaction, league: int, group: str):
+async def cfi_group_autocomplete(interaction: discord.Interaction, current: str):
+    return [
+        app_commands.Choice(name=g, value=g)
+        for g in ["A", "B", "C"]
+        if current.upper() in g
+    ]
+
+
+@tree.command(name="cfitable", description="Show CFI standings for a league and group (mods only)")
+@app_commands.describe(league="Select a league", group="Select a group")
+@app_commands.autocomplete(league=cfi_league_autocomplete, group=cfi_group_autocomplete)
+async def cfitable(interaction: discord.Interaction, league: str, group: str):
+    user_roles = [r.name for r in interaction.user.roles]
+    if not any(r in user_roles for r in CFI_MOD_ROLES):
+        await interaction.response.send_message("❌ You don't have permission to use this command.", ephemeral=True)
+        return
+
+    try:
+        league_num = int(league)
+    except ValueError:
+        await interaction.response.send_message("❌ Invalid league.", ephemeral=True)
+        return
+
     group = group.upper()
-    if league not in CFI_LEAGUE_NAMES or group not in ("A", "B", "C"):
-        await interaction.response.send_message("❌ Invalid league (1-6) or group (A/B/C).", ephemeral=True)
+    if league_num not in CFI_LEAGUE_NAMES or group not in ("A", "B", "C"):
+        await interaction.response.send_message("❌ Invalid league or group.", ephemeral=True)
         return
 
     conn = get_db()
     c = conn.cursor()
     week = cfi_get_week(conn)
-    c.execute("SELECT * FROM cfi_players WHERE league=%s AND group_letter=%s ORDER BY week_points DESC", (league, group))
+    c.execute("SELECT * FROM cfi_players WHERE league=%s AND group_letter=%s ORDER BY week_points DESC", (league_num, group))
     players = [dict(p) for p in c.fetchall()]
     conn.close()
 
@@ -4157,7 +4177,7 @@ async def cfitable(interaction: discord.Interaction, league: int, group: str):
         return
 
     players.sort(key=cfi_sort_key)
-    league_name = CFI_LEAGUE_NAMES[league]
+    league_name = CFI_LEAGUE_NAMES[league_num]
 
     lines = []
     for i, p in enumerate(players, 1):
@@ -4165,10 +4185,12 @@ async def cfitable(interaction: discord.Interaction, league: int, group: str):
         name = member.display_name if member else p["name"]
         gd = p["week_goals_for"] - p["week_goals_against"]
         gd_str = f"+{gd}" if gd > 0 else str(gd)
+        total = p["week_wins"] + p["week_draws"] + p["week_losses"]
+        wr = f"{round(p['week_wins']/total*100)}%" if total > 0 else "0%"
         lines.append(
             f"**{i}.** {name} — {p['week_points']}pts | "
-            f"W{p['week_wins']} D{p['week_draws']} L{p['week_losses']} | "
-            f"GD {gd_str} | GF {p['week_goals_for']}"
+            f"W{p['week_wins']}D{p['week_draws']}L{p['week_losses']} {wr} | "
+            f"GD{gd_str} GF{p['week_goals_for']}"
         )
 
     embed = discord.Embed(
