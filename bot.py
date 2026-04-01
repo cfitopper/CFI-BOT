@@ -4173,8 +4173,45 @@ async def cfigroup(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed)
 
 
-@tree.command(name="cfistandingsall", description="Show all CFI group standings (admin only)")
-@is_admin()
+@tree.command(name="cfileague", description="Show all 3 group standings for a specific CFI league")
+@app_commands.describe(league="League number (1=Cosmic, 2=Universal, 3=Galaxy, 4=Global, 5=International, 6=Elite)")
+async def cfileague(interaction: discord.Interaction, league: int):
+    if league not in CFI_LEAGUE_NAMES:
+        await interaction.response.send_message("❌ Invalid league (1-6).", ephemeral=True)
+        return
+
+    conn = get_db()
+    c = conn.cursor()
+    week = cfi_get_week(conn)
+    c.execute("SELECT * FROM cfi_players WHERE league=%s ORDER BY group_letter, week_points DESC", (league,))
+    all_players = [dict(p) for p in c.fetchall()]
+    conn.close()
+
+    if not all_players:
+        await interaction.response.send_message("❌ No players found in this league.", ephemeral=True)
+        return
+
+    league_name = CFI_LEAGUE_NAMES[league]
+    embed = discord.Embed(title=f"📊 {league_name} League — Week {week}", color=0x5865F2)
+
+    for group_letter in ["A", "B", "C"]:
+        players = [p for p in all_players if p["group_letter"] == group_letter]
+        if not players:
+            continue
+        players.sort(key=cfi_sort_key)
+        lines = []
+        for i, p in enumerate(players, 1):
+            member = interaction.guild.get_member(int(p["name"])) if p["name"].isdigit() else None
+            name = member.display_name if member else p["name"]
+            gd = p["week_goals_for"] - p["week_goals_against"]
+            gd_str = f"+{gd}" if gd > 0 else str(gd)
+            lines.append(f"**{i}.** {name}\n{p['week_points']}pts | W{p['week_wins']} D{p['week_draws']} L{p['week_losses']} | GD{gd_str}")
+        embed.add_field(name=f"Group {group_letter}", value="\n".join(lines), inline=True)
+
+    await interaction.response.send_message(embed=embed)
+
+
+@tree.command(name="cfistandingsall", description="Show all CFI group standings")
 async def cfistandingsall(interaction: discord.Interaction):
     await interaction.response.defer()
     conn = get_db()
