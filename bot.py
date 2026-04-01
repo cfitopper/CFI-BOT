@@ -3824,16 +3824,20 @@ async def cfiseasonstart(interaction: discord.Interaction):
         ephemeral=True
     )
 
-    # Post public bracket embed per league
+    # Post single public bracket embed, all leagues top to bottom
+    embed = discord.Embed(title="🏆 CFI Season — Full Bracket", color=0x5865F2)
+    description_lines = []
     for league in range(1, 7):
         league_name = CFI_LEAGUE_NAMES[league]
-        embed = discord.Embed(title=f"🏆 CFI Season — {league_name} League", color=0x5865F2)
         for g in ["A", "B", "C"]:
             grp = [m.display_name for m, l, gr in assignments if l == league and gr == g]
             if grp:
-                lines = [f"{i+1}. {name}" for i, name in enumerate(grp)]
-                embed.add_field(name=f"Group {g}", value="\n".join(lines), inline=True)
-        await interaction.channel.send(embed=embed)
+                description_lines.append(f"**{league_name} — Group {g}**")
+                for i, name in enumerate(grp, 1):
+                    description_lines.append(f"{i}. {name}")
+                description_lines.append("")
+    embed.description = "\n".join(description_lines)
+    await interaction.channel.send(embed=embed)
 
     # Assign roles after responding to avoid timeout
     async def assign_roles_bg():
