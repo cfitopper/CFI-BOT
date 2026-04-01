@@ -4327,7 +4327,14 @@ async def cfiranking(interaction: discord.Interaction):
         name = member.display_name if member else p["name"]
         league_name = CFI_LEAGUE_NAMES.get(p["league"], "?")
         prefix = medals.get(i, f"**{i}.**")
-        lines.append(f"{prefix} {name} — **{p['global_points']} pts** ({league_name} {p['group_letter']})")
+        total = p["all_time_wins"] + p["all_time_draws"] + p["all_time_losses"]
+        wr = f"{round(p['all_time_wins']/total*100)}%" if total > 0 else "0%"
+        gf = p["all_time_goals_for"]
+        ga = p["all_time_goals_against"]
+        lines.append(
+            f"{prefix} {name} — **{p['global_points']} pts** ({league_name} {p['group_letter']})\n"
+            f"　W{p['all_time_wins']} D{p['all_time_draws']} L{p['all_time_losses']} {wr} | GF{gf} GA{ga}"
+        )
 
     embed = discord.Embed(title=f"🌍 CFI Global Ranking (Week {week})", color=0xffaa00)
     embed.description = "\n".join(lines)
