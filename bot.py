@@ -4465,25 +4465,31 @@ async def cfiprofile(interaction: discord.Interaction, player: discord.Member = 
 
     p = dict(p)
     league_name = CFI_LEAGUE_NAMES.get(p["league"], "?")
-    total_w = p["week_wins"] + p["week_draws"] + p["week_losses"]
+
+    # All-time stats
     total_all = p["all_time_wins"] + p["all_time_draws"] + p["all_time_losses"]
-    gd = p["week_goals_for"] - p["week_goals_against"]
-    gd_str = f"+{gd}" if gd > 0 else str(gd)
-    winrate = round(p["week_wins"] / total_w * 100) if total_w > 0 else 0
-    gpg = round(p["week_goals_for"] / total_w, 2) if total_w > 0 else 0
+    at_wr = round(p["all_time_wins"] / total_all * 100) if total_all > 0 else 0
+    at_gd = p["all_time_goals_for"] - p["all_time_goals_against"]
+    at_gd_str = f"+{at_gd}" if at_gd > 0 else str(at_gd)
+    at_gpg = round(p["all_time_goals_for"] / total_all, 2) if total_all > 0 else 0
+
+    # This week stats
+    total_w = p["week_wins"] + p["week_draws"] + p["week_losses"]
+    w_wr = round(p["week_wins"] / total_w * 100) if total_w > 0 else 0
+    w_gd = p["week_goals_for"] - p["week_goals_against"]
+    w_gd_str = f"+{w_gd}" if w_gd > 0 else str(w_gd)
 
     embed = discord.Embed(title=f"⚽ {target.display_name} — CFI Profile", color=0x5865F2)
     embed.set_thumbnail(url=target.display_avatar.url)
     embed.description = (
-        f"**League:** {league_name} — Group {p['group_letter']} (Week {week})\n\n"
-        f"**Weekly Record:** W{p['week_wins']} D{p['week_draws']} L{p['week_losses']}\n"
-        f"**Weekly Points:** {p['week_points']}\n"
-        f"**Win Rate:** {winrate}%\n"
-        f"**Goal Difference:** {gd_str}\n"
-        f"**Goals Per Game:** {gpg}\n"
+        f"**League:** {league_name} — Group {p['group_letter']} (Week {week})\n"
         f"**Global Points:** {p['global_points']}\n\n"
-        f"**All-Time:** W{p['all_time_wins']} D{p['all_time_draws']} L{p['all_time_losses']}\n"
-        f"**All-Time Goals:** {p['all_time_goals_for']} scored / {p['all_time_goals_against']} conceded"
+        f"**— All-Time —**\n"
+        f"W{p['all_time_wins']} D{p['all_time_draws']} L{p['all_time_losses']} | {at_wr}% winrate\n"
+        f"GF {p['all_time_goals_for']} GA {p['all_time_goals_against']} | GD {at_gd_str} | {at_gpg} goals/game\n\n"
+        f"**— This Week —**\n"
+        f"W{p['week_wins']} D{p['week_draws']} L{p['week_losses']} | {w_wr}% winrate\n"
+        f"Points: {p['week_points']} | GD {w_gd_str} | GF {p['week_goals_for']}"
     )
     await interaction.response.send_message(embed=embed)
 
