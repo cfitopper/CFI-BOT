@@ -5153,7 +5153,7 @@ async def cfischedule(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed)
 
 
-@tree.command(name="cfidqplayer", description="DQ a player: void all their matches, reverse opponent stats, then remove them (admin only)")
+@tree.command(name="cfiremoveplayer", description="Remove a player: void all their matches, reverse opponent stats, then remove them (admin only)")
 @is_admin()
 @app_commands.describe(player="Player to disqualify")
 async def cfidqplayer(interaction: discord.Interaction, player: discord.Member):
