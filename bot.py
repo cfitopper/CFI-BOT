@@ -4676,38 +4676,46 @@ async def cfirevertweek(interaction: discord.Interaction):
     asyncio.ensure_future(assign_revert_roles())
 
 
-@tree.command(name="cfiaddplayer", description="Manually add a player to the CFI system (admin only)")
+@tree.command(name="cfiaddplayer", description="Add a player to the open spot in a CFI league (admin only)")
 @is_admin()
-@app_commands.describe(player="Player to add", league="Select a league", group="Select a group")
-@app_commands.autocomplete(league=cfi_league_autocomplete, group=cfi_group_autocomplete)
-async def cfiaddplayer(interaction: discord.Interaction, player: discord.Member, league: str, group: str):
+@app_commands.describe(player="Player to add", league="Select a league")
+@app_commands.autocomplete(league=cfi_league_autocomplete)
+async def cfiaddplayer(interaction: discord.Interaction, player: discord.Member, league: str):
     try:
         league_num = int(league)
     except ValueError:
         await interaction.response.send_message("❌ Invalid league.", ephemeral=True)
         return
 
-    group = group.upper()
-    if league_num not in CFI_LEAGUE_NAMES or group not in ("A", "B", "C"):
-        await interaction.response.send_message("❌ Invalid league or group.", ephemeral=True)
+    if league_num not in CFI_LEAGUE_NAMES:
+        await interaction.response.send_message("❌ Invalid league.", ephemeral=True)
         return
 
     uid = str(player.id)
     conn = get_db()
     c = conn.cursor()
     season = cfi_get_season(conn)
+
+    # Find the group with the fewest players (the open spot)
+    group_counts = {}
+    for g in ["A", "B", "C"]:
+        c.execute("SELECT COUNT(*) AS cnt FROM cfi_players WHERE league=%s AND group_letter=%s", (league_num, g))
+        group_counts[g] = dict(c.fetchone())["cnt"]
+
+    open_group = min(group_counts, key=group_counts.get)
+
     c.execute("""
         INSERT INTO cfi_players (name, league, group_letter, season)
         VALUES (%s, %s, %s, %s)
         ON CONFLICT (name) DO UPDATE SET league=EXCLUDED.league, group_letter=EXCLUDED.group_letter
-    """, (uid, league_num, group, season))
+    """, (uid, league_num, open_group, season))
     conn.commit()
     conn.close()
 
-    await assign_cfi_role(interaction.guild, player, league_num, group)
+    await assign_cfi_role(interaction.guild, player, league_num, open_group)
     league_name = CFI_LEAGUE_NAMES[league_num]
     await interaction.response.send_message(
-        f"✅ **{player.display_name}** added to **{league_name} League — Group {group}**.",
+        f"✅ **{player.display_name}** added to **{league_name} League — Group {open_group}** (open spot, {group_counts[open_group] + 1} players now).",
         ephemeral=True
     )
 
