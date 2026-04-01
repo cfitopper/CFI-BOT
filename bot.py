@@ -786,11 +786,22 @@ async def profile(interaction: discord.Interaction, player: discord.Member):
             continue
         break
 
+    # Also fetch CFI stats
+    conn2 = get_db()
+    c2 = conn2.cursor()
+    c2.execute("SELECT * FROM cfi_players WHERE name=%s", (uid,))
+    cfi_p = c2.fetchone()
+    c2.execute("SELECT golden_boot_goals FROM players WHERE name=%s", (uid,))
+    gb_row = c2.fetchone()
+    conn2.close()
+
     embed = discord.Embed(title=f"⚽ {display_name}", color=0xffaa00)
     embed.set_thumbnail(url=player.display_avatar.url)
     licensed = p.get("licensed", "No")
     playstyle = p.get("playstyle", "Balanced")
-    embed.description = (
+    gb_goals = dict(gb_row)["golden_boot_goals"] if gb_row else 0
+
+    base_desc = (
         f"**Tier:** {p['tier']}\n"
         f"**Global Rank:** #{global_rank}\n"
         f"**Wins:** {p['wins']}\n"
@@ -798,9 +809,33 @@ async def profile(interaction: discord.Interaction, player: discord.Member):
         f"**Goals Scored:** {p['goals']}\n"
         f"**Winrate:** {winrate}%\n"
         f"**Matches Played:** {total}\n"
+        f"**Golden Boot Goals:** {gb_goals}\n"
         f"**Licensed:** {licensed}\n"
         f"**Playstyle:** {playstyle}"
     )
+
+    if cfi_p:
+        cfi_p = dict(cfi_p)
+        league_name = CFI_LEAGUE_NAMES.get(cfi_p["league"], "?")
+        cfi_total = cfi_p["week_wins"] + cfi_p["week_draws"] + cfi_p["week_losses"]
+        cfi_gd = cfi_p["week_goals_for"] - cfi_p["week_goals_against"]
+        cfi_gd_str = f"+{cfi_gd}" if cfi_gd > 0 else str(cfi_gd)
+        cfi_wr = round(cfi_p["week_wins"] / cfi_total * 100) if cfi_total > 0 else 0
+        cfi_gpg = round(cfi_p["week_goals_for"] / cfi_total, 2) if cfi_total > 0 else 0
+        cfi_desc = (
+            f"\n\n**— CFI League Stats —**\n"
+            f"**League:** {league_name} — Group {cfi_p['group_letter']}\n"
+            f"**Weekly Record:** W{cfi_p['week_wins']} D{cfi_p['week_draws']} L{cfi_p['week_losses']}\n"
+            f"**Weekly Points:** {cfi_p['week_points']}\n"
+            f"**Win Rate:** {cfi_wr}%\n"
+            f"**Goal Difference:** {cfi_gd_str}\n"
+            f"**Goals Per Game:** {cfi_gpg}\n"
+            f"**Global Points:** {cfi_p['global_points']}"
+        )
+        embed.description = base_desc + cfi_desc
+    else:
+        embed.description = base_desc
+
     await interaction.followup.send(embed=embed)
 
 @tree.command(name="alltiers", description="Overview of all tiers and their players")
@@ -3114,6 +3149,145 @@ async def on_interaction(interaction: discord.Interaction):
         del pending_qualifier_scores[msg_id]
         await interaction.response.edit_message(content=f"🚫 Score rejected by **{interaction.user.display_name}**.", embed=None, view=None)
 
+    # ---- CFI SCORE CONFIRM ----
+    elif custom_id == "cfi_confirm":
+        if msg_id not in pending_cfi_scores:
+            await interaction.response.send_message("❌ This score submission has expired.", ephemeral=True)
+            return
+        data = pending_cfi_scores[msg_id]
+        user_roles = [r.name for r in interaction.user.roles]
+        is_mod = any(r in user_roles for r in RANKED_MOD_ROLES)
+        if not is_mod:
+            if str(uid) == str(data["submitter"]):
+                await interaction.response.send_message("❌ You can't confirm your own score submission!", ephemeral=True)
+                return
+            if str(uid) != str(data["player2"]):
+                await interaction.response.send_message("❌ Only the opponent can confirm this score.", ephemeral=True)
+                return
+
+        p1_id = data["player1"]
+        p2_id = data["player2"]
+        s1 = data["score1"]
+        s2 = data["score2"]
+        league = data["league"]
+        group_letter = data["group_letter"]
+        week = data["week"]
+        season = data["season"]
+        submitter_id = data["submitter"]
+
+        conn = get_db()
+        c = conn.cursor()
+
+        # Insert match
+        c.execute("""
+            INSERT INTO cfi_matches (player1, player2, score1, score2, league, group_letter, week, season, date, submitted_by)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (p1_id, p2_id, s1, s2, league, group_letter, week, season, datetime.now().isoformat(), submitter_id))
+
+        now = datetime.now()
+        count_global = (week >= 2)
+
+        def update_cfi_player(name, gf, ga, w, d, l, gpts):
+            pts = 3 if w else (1 if d else 0)
+            c.execute("""
+                UPDATE cfi_players SET
+                    week_wins = week_wins + %s,
+                    week_draws = week_draws + %s,
+                    week_losses = week_losses + %s,
+                    week_goals_for = week_goals_for + %s,
+                    week_goals_against = week_goals_against + %s,
+                    week_points = week_points + %s,
+                    all_time_wins = all_time_wins + %s,
+                    all_time_draws = all_time_draws + %s,
+                    all_time_losses = all_time_losses + %s,
+                    all_time_goals_for = all_time_goals_for + %s,
+                    all_time_goals_against = all_time_goals_against + %s,
+                    global_points = global_points + %s,
+                    first_points_ts = CASE WHEN %s > 0 AND first_points_ts IS NULL THEN %s ELSE first_points_ts END
+                WHERE name = %s
+            """, (w, d, l, gf, ga, pts, w, d, l, gf, ga, gpts, pts, now, name))
+
+        if s1 > s2:
+            gpts1 = CFI_GLOBAL_POINTS[league]["win"] if count_global else 0
+            gpts2 = 0
+            update_cfi_player(p1_id, s1, s2, 1, 0, 0, gpts1)
+            update_cfi_player(p2_id, s2, s1, 0, 0, 1, gpts2)
+            result_line = f"🏆 **{interaction.guild.get_member(int(p1_id)).display_name if interaction.guild.get_member(int(p1_id)) else p1_id}** wins!"
+        elif s2 > s1:
+            gpts2 = CFI_GLOBAL_POINTS[league]["win"] if count_global else 0
+            gpts1 = 0
+            update_cfi_player(p1_id, s1, s2, 0, 0, 1, gpts1)
+            update_cfi_player(p2_id, s2, s1, 1, 0, 0, gpts2)
+            result_line = f"🏆 **{interaction.guild.get_member(int(p2_id)).display_name if interaction.guild.get_member(int(p2_id)) else p2_id}** wins!"
+        else:
+            gpts1 = CFI_GLOBAL_POINTS[league]["draw"] if count_global else 0
+            gpts2 = gpts1
+            update_cfi_player(p1_id, s1, s2, 0, 1, 0, gpts1)
+            update_cfi_player(p2_id, s2, s1, 0, 1, 0, gpts2)
+            result_line = "🤝 **Draw!**"
+
+        conn.commit()
+        conn.close()
+
+        del pending_cfi_scores[msg_id]
+
+        p1_member = interaction.guild.get_member(int(p1_id))
+        p2_member = interaction.guild.get_member(int(p2_id))
+        p1_name = p1_member.display_name if p1_member else p1_id
+        p2_name = p2_member.display_name if p2_member else p2_id
+        league_name = CFI_LEAGUE_NAMES.get(league, str(league))
+
+        confirm_embed = discord.Embed(title="✅ CFI Match Confirmed!", color=0x00ff88)
+        confirm_embed.description = (
+            f"**{league_name} League — Group {group_letter} — Week {week}**\n\n"
+            f"<@{p1_id}> **{s1} — {s2}** <@{p2_id}>\n\n"
+            f"{result_line}"
+        )
+        confirm_embed.set_footer(text=f"Confirmed by {interaction.user.display_name}")
+
+        await interaction.response.edit_message(
+            content=f"<@{p1_id}> vs <@{p2_id}>",
+            embed=confirm_embed,
+            view=None,
+            allowed_mentions=discord.AllowedMentions(users=True)
+        )
+
+        # Log to #score-mod
+        score_mod = discord.utils.get(interaction.guild.text_channels, name="score-mod")
+        if score_mod:
+            log_embed = discord.Embed(title="📋 CFI Score Logged", color=0x5865F2)
+            log_embed.description = (
+                f"**{league_name} L{league} Group {group_letter} — Week {week}**\n"
+                f"<@{p1_id}> **{s1} — {s2}** <@{p2_id}>\n"
+                f"{result_line}\n"
+                f"Submitted by <@{submitter_id}> · Confirmed by {interaction.user.display_name}"
+            )
+            await score_mod.send(embed=log_embed, allowed_mentions=discord.AllowedMentions(users=True))
+
+    # ---- CFI SCORE DENY ----
+    elif custom_id == "cfi_deny":
+        if msg_id not in pending_cfi_scores:
+            await interaction.response.send_message("❌ This score submission has expired.", ephemeral=True)
+            return
+        data = pending_cfi_scores[msg_id]
+        if str(uid) != str(data["player2"]):
+            await interaction.response.send_message("❌ Only the opponent can deny this score.", ephemeral=True)
+            return
+        del pending_cfi_scores[msg_id]
+        await interaction.response.edit_message(content="❌ Score denied by opponent.", embed=None, view=None)
+
+    # ---- CFI SCORE REJECT (MOD) ----
+    elif custom_id == "cfi_reject":
+        if msg_id not in pending_cfi_scores:
+            await interaction.response.send_message("❌ This score submission has expired.", ephemeral=True)
+            return
+        allowed = ADMIN_ROLES + ["League Moderator (crew)", "Moderator (crew)"]
+        if not any(r.name in allowed for r in interaction.user.roles):
+            await interaction.response.send_message("❌ Only admins and mods can reject scores.", ephemeral=True)
+            return
+        del pending_cfi_scores[msg_id]
+        await interaction.response.edit_message(content=f"🚫 Score rejected by **{interaction.user.display_name}**.", embed=None, view=None)
+
 
 @tree.command(name="rankedsetstats", description="Manually update a player's ranked stats (admin only)")
 @is_admin()
@@ -4138,6 +4312,845 @@ async def qualifiersetscore(interaction: discord.Interaction, player1: discord.M
         f"**{winner_name}** has been given the **CFI-Participant** role.",
         ephemeral=True
     )
+
+
+# ─────────────────────────────────────────
+# CFI LEAGUE COMMANDS
+# ─────────────────────────────────────────
+
+@tree.command(name="cfiseasonstart", description="Start the CFI season: randomly distribute all @CFI-Participant players into leagues (admin only)")
+@is_admin()
+async def cfiseasonstart(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+
+    participant_role = discord.utils.get(interaction.guild.roles, name="CFI-Participant")
+    if not participant_role:
+        await interaction.followup.send("❌ Role **CFI-Participant** not found.", ephemeral=True)
+        return
+
+    members = [m for m in interaction.guild.members if participant_role in m.roles]
+    if len(members) == 0:
+        await interaction.followup.send("❌ No members with @CFI-Participant found.", ephemeral=True)
+        return
+
+    random.shuffle(members)
+    total = len(members)
+    # Distribute as evenly as possible across 6 leagues, max 15 per league
+    per_league = min(15, total // 6)
+    # Assign first 6*per_league players; leftover stay unassigned (shouldn't happen per rules)
+    assignments = []
+    idx = 0
+    for league in range(1, 7):
+        group_players = members[idx:idx + per_league]
+        idx += per_league
+        random.shuffle(group_players)
+        per_group = per_league // 3
+        for gi, g in enumerate(["A", "B", "C"]):
+            for m in group_players[gi * per_group:(gi + 1) * per_group]:
+                assignments.append((m, league, g))
+
+    conn = get_db()
+    c = conn.cursor()
+    season = cfi_get_season(conn)
+
+    for member, league, group in assignments:
+        uid = str(member.id)
+        c.execute("""
+            INSERT INTO cfi_players (name, league, group_letter, season)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (name) DO UPDATE SET
+                league = EXCLUDED.league,
+                group_letter = EXCLUDED.group_letter,
+                week_wins = 0, week_draws = 0, week_losses = 0,
+                week_goals_for = 0, week_goals_against = 0, week_points = 0,
+                first_points_ts = NULL, season = EXCLUDED.season
+        """, (uid, league, group, season))
+
+    c.execute("UPDATE cfi_config SET value = '1' WHERE key = 'current_week'")
+    conn.commit()
+    conn.close()
+
+    # Assign discord roles
+    failed = 0
+    for member, league, group in assignments:
+        try:
+            await assign_cfi_role(interaction.guild, member, league, group)
+        except Exception:
+            failed += 1
+
+    lines = []
+    for league in range(1, 7):
+        league_name = CFI_LEAGUE_NAMES[league]
+        for g in ["A", "B", "C"]:
+            grp = [m.display_name for m, l, gr in assignments if l == league and gr == g]
+            if grp:
+                lines.append(f"**{league_name} {g}:** {', '.join(grp)}")
+
+    summary = "\n".join(lines) if lines else "No assignments made."
+    await interaction.followup.send(
+        f"✅ CFI Season started! **{len(assignments)}** players distributed.\n\n{summary}"
+        + (f"\n\n⚠️ Failed to assign roles for {failed} players." if failed else ""),
+        ephemeral=True
+    )
+
+
+@tree.command(name="cfiscore", description="Submit your CFI match result")
+@app_commands.describe(opponent="Your opponent", goals_you="Your goals", goals_opponent="Opponent's goals")
+async def cfiscore(interaction: discord.Interaction, opponent: discord.Member, goals_you: int, goals_opponent: int):
+    uid = str(interaction.user.id)
+    opp_id = str(opponent.id)
+
+    if uid == opp_id:
+        await interaction.response.send_message("❌ You can't submit a score against yourself!", ephemeral=True)
+        return
+    if goals_you < 0 or goals_opponent < 0:
+        await interaction.response.send_message("❌ Scores can't be negative.", ephemeral=True)
+        return
+
+    conn = get_db()
+    c = conn.cursor()
+
+    c.execute("SELECT * FROM cfi_players WHERE name = %s", (uid,))
+    p1 = c.fetchone()
+    c.execute("SELECT * FROM cfi_players WHERE name = %s", (opp_id,))
+    p2 = c.fetchone()
+
+    if not p1:
+        conn.close()
+        await interaction.response.send_message("❌ You are not registered in the CFI system.", ephemeral=True)
+        return
+    if not p2:
+        conn.close()
+        await interaction.response.send_message(f"❌ **{opponent.display_name}** is not registered in the CFI system.", ephemeral=True)
+        return
+
+    p1 = dict(p1)
+    p2 = dict(p2)
+
+    if p1["league"] != p2["league"] or p1["group_letter"] != p2["group_letter"]:
+        conn.close()
+        await interaction.response.send_message("❌ You and your opponent are not in the same group.", ephemeral=True)
+        return
+
+    week = cfi_get_week(conn)
+    season = cfi_get_season(conn)
+
+    # Check match limit
+    c.execute("SELECT COUNT(*) AS cnt FROM cfi_matches WHERE (player1 = %s OR player2 = %s) AND week = %s AND season = %s",
+              (uid, uid, week, season))
+    my_count = dict(c.fetchone())["cnt"]
+    if my_count >= CFI_MAX_WEEK_MATCHES:
+        conn.close()
+        await interaction.response.send_message(f"❌ You have already played {CFI_MAX_WEEK_MATCHES} matches this week (max).", ephemeral=True)
+        return
+
+    # Check duplicate
+    c.execute("""
+        SELECT id FROM cfi_matches
+        WHERE ((player1=%s AND player2=%s) OR (player1=%s AND player2=%s))
+        AND week=%s AND season=%s
+    """, (uid, opp_id, opp_id, uid, week, season))
+    if c.fetchone():
+        conn.close()
+        await interaction.response.send_message("❌ You have already played against this opponent this week.", ephemeral=True)
+        return
+
+    conn.close()
+
+    league = p1["league"]
+    group_letter = p1["group_letter"]
+    league_name = CFI_LEAGUE_NAMES[league]
+
+    embed = discord.Embed(title="⚽ CFI Score Submission", color=0xffaa00)
+    embed.description = (
+        f"**{league_name} League — Group {group_letter} — Week {week}**\n\n"
+        f"<@{uid}> **{goals_you} — {goals_opponent}** <@{opp_id}>\n\n"
+        f"<@{opp_id}> please confirm this score!"
+    )
+    embed.set_footer(text=f"Submitted by {interaction.user.display_name}")
+
+    view = discord.ui.View(timeout=300)
+    view.add_item(discord.ui.Button(label="✅ Confirm", style=discord.ButtonStyle.green, custom_id="cfi_confirm"))
+    view.add_item(discord.ui.Button(label="❌ Deny", style=discord.ButtonStyle.red, custom_id="cfi_deny"))
+    view.add_item(discord.ui.Button(label="🚫 Reject (Mod)", style=discord.ButtonStyle.grey, custom_id="cfi_reject"))
+
+    await interaction.response.send_message(
+        content=f"<@{opp_id}>",
+        embed=embed,
+        view=view,
+        allowed_mentions=discord.AllowedMentions(users=True)
+    )
+    msg = await interaction.original_response()
+
+    pending_cfi_scores[msg.id] = {
+        "player1": uid,
+        "player2": opp_id,
+        "score1": goals_you,
+        "score2": goals_opponent,
+        "league": league,
+        "group_letter": group_letter,
+        "week": week,
+        "season": season,
+        "submitter": uid,
+    }
+
+    async def on_timeout_cfi(message_id, channel):
+        await asyncio.sleep(300)
+        if message_id in pending_cfi_scores:
+            del pending_cfi_scores[message_id]
+            try:
+                msg_obj = await channel.fetch_message(message_id)
+                expired_embed = discord.Embed(
+                    title="❌ CFI Score Submission Expired",
+                    description="This score submission was not confirmed in time.",
+                    color=0xff4444,
+                )
+                await msg_obj.edit(embed=expired_embed, view=None)
+            except Exception:
+                pass
+
+    asyncio.ensure_future(on_timeout_cfi(msg.id, interaction.channel))
+
+
+@tree.command(name="cfimatchscore", description="Manually set a CFI match score (mods only)")
+@app_commands.describe(player1="First player", player2="Second player", goals_player1="Goals for player 1", goals_player2="Goals for player 2")
+async def cfimatchscore(interaction: discord.Interaction, player1: discord.Member, player2: discord.Member, goals_player1: int, goals_player2: int):
+    await interaction.response.defer(ephemeral=True)
+
+    user_roles = [r.name for r in interaction.user.roles]
+    if not any(r in user_roles for r in RANKED_MOD_ROLES):
+        await interaction.followup.send("❌ You don't have permission to use this command.", ephemeral=True)
+        return
+
+    p1_id = str(player1.id)
+    p2_id = str(player2.id)
+
+    conn = get_db()
+    c = conn.cursor()
+
+    c.execute("SELECT * FROM cfi_players WHERE name = %s", (p1_id,))
+    p1 = c.fetchone()
+    c.execute("SELECT * FROM cfi_players WHERE name = %s", (p2_id,))
+    p2 = c.fetchone()
+
+    if not p1 or not p2:
+        conn.close()
+        await interaction.followup.send("❌ One or both players not found in CFI.", ephemeral=True)
+        return
+
+    p1 = dict(p1)
+    p2 = dict(p2)
+
+    if p1["league"] != p2["league"] or p1["group_letter"] != p2["group_letter"]:
+        conn.close()
+        await interaction.followup.send("❌ Players are not in the same group.", ephemeral=True)
+        return
+
+    week = cfi_get_week(conn)
+    season = cfi_get_season(conn)
+    league = p1["league"]
+    group_letter = p1["group_letter"]
+    s1, s2 = goals_player1, goals_player2
+    count_global = (week >= 2)
+    now = datetime.now()
+
+    c.execute("""
+        INSERT INTO cfi_matches (player1, player2, score1, score2, league, group_letter, week, season, date, submitted_by)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    """, (p1_id, p2_id, s1, s2, league, group_letter, week, season, now.isoformat(), str(interaction.user.id)))
+
+    def upd(name, gf, ga, w, d, l, gpts):
+        pts = 3 if w else (1 if d else 0)
+        c.execute("""
+            UPDATE cfi_players SET
+                week_wins=week_wins+%s, week_draws=week_draws+%s, week_losses=week_losses+%s,
+                week_goals_for=week_goals_for+%s, week_goals_against=week_goals_against+%s,
+                week_points=week_points+%s,
+                all_time_wins=all_time_wins+%s, all_time_draws=all_time_draws+%s, all_time_losses=all_time_losses+%s,
+                all_time_goals_for=all_time_goals_for+%s, all_time_goals_against=all_time_goals_against+%s,
+                global_points=global_points+%s,
+                first_points_ts=CASE WHEN %s>0 AND first_points_ts IS NULL THEN %s ELSE first_points_ts END
+            WHERE name=%s
+        """, (w, d, l, gf, ga, pts, w, d, l, gf, ga, gpts, pts, now, name))
+
+    if s1 > s2:
+        upd(p1_id, s1, s2, 1, 0, 0, CFI_GLOBAL_POINTS[league]["win"] if count_global else 0)
+        upd(p2_id, s2, s1, 0, 0, 1, 0)
+        result = f"🏆 {player1.display_name} wins!"
+    elif s2 > s1:
+        upd(p1_id, s1, s2, 0, 0, 1, 0)
+        upd(p2_id, s2, s1, 1, 0, 0, CFI_GLOBAL_POINTS[league]["win"] if count_global else 0)
+        result = f"🏆 {player2.display_name} wins!"
+    else:
+        gpts = CFI_GLOBAL_POINTS[league]["draw"] if count_global else 0
+        upd(p1_id, s1, s2, 0, 1, 0, gpts)
+        upd(p2_id, s2, s1, 0, 1, 0, gpts)
+        result = "🤝 Draw!"
+
+    conn.commit()
+    conn.close()
+
+    league_name = CFI_LEAGUE_NAMES[league]
+    await interaction.followup.send(
+        f"✅ CFI score set: **{player1.display_name} {s1} — {s2} {player2.display_name}** ({league_name} Group {group_letter}, Week {week})\n{result}",
+        ephemeral=True
+    )
+
+
+@tree.command(name="cfiunscore", description="Revert a CFI match between two players (admin only)")
+@is_admin()
+@app_commands.describe(player1="First player", player2="Second player")
+async def cfiunscore(interaction: discord.Interaction, player1: discord.Member, player2: discord.Member):
+    await interaction.response.defer(ephemeral=True)
+
+    p1_id = str(player1.id)
+    p2_id = str(player2.id)
+
+    conn = get_db()
+    c = conn.cursor()
+
+    c.execute("""
+        SELECT * FROM cfi_matches
+        WHERE (player1=%s AND player2=%s) OR (player1=%s AND player2=%s)
+        ORDER BY id DESC LIMIT 1
+    """, (p1_id, p2_id, p2_id, p1_id))
+    match = c.fetchone()
+
+    if not match:
+        conn.close()
+        await interaction.followup.send(f"❌ No CFI match found between **{player1.display_name}** and **{player2.display_name}**.", ephemeral=True)
+        return
+
+    match = dict(match)
+    s1, s2 = match["score1"], match["score2"]
+    league = match["league"]
+    week = match["week"]
+    count_global = (week >= 2)
+
+    # Reverse the stats
+    def undo_upd(name, gf, ga, w, d, l, gpts):
+        pts = 3 if w else (1 if d else 0)
+        c.execute("""
+            UPDATE cfi_players SET
+                week_wins=GREATEST(week_wins-%s,0), week_draws=GREATEST(week_draws-%s,0), week_losses=GREATEST(week_losses-%s,0),
+                week_goals_for=GREATEST(week_goals_for-%s,0), week_goals_against=GREATEST(week_goals_against-%s,0),
+                week_points=GREATEST(week_points-%s,0),
+                all_time_wins=GREATEST(all_time_wins-%s,0), all_time_draws=GREATEST(all_time_draws-%s,0), all_time_losses=GREATEST(all_time_losses-%s,0),
+                all_time_goals_for=GREATEST(all_time_goals_for-%s,0), all_time_goals_against=GREATEST(all_time_goals_against-%s,0),
+                global_points=GREATEST(global_points-%s,0)
+            WHERE name=%s
+        """, (w, d, l, gf, ga, pts, w, d, l, gf, ga, gpts, name))
+
+    if match["player1"] == p1_id:
+        mp1_id, mp2_id, ms1, ms2 = p1_id, p2_id, s1, s2
+    else:
+        mp1_id, mp2_id, ms1, ms2 = p2_id, p1_id, s2, s1
+
+    if ms1 > ms2:
+        undo_upd(mp1_id, ms1, ms2, 1, 0, 0, CFI_GLOBAL_POINTS[league]["win"] if count_global else 0)
+        undo_upd(mp2_id, ms2, ms1, 0, 0, 1, 0)
+    elif ms2 > ms1:
+        undo_upd(mp1_id, ms1, ms2, 0, 0, 1, 0)
+        undo_upd(mp2_id, ms2, ms1, 1, 0, 0, CFI_GLOBAL_POINTS[league]["win"] if count_global else 0)
+    else:
+        gpts = CFI_GLOBAL_POINTS[league]["draw"] if count_global else 0
+        undo_upd(mp1_id, ms1, ms2, 0, 1, 0, gpts)
+        undo_upd(mp2_id, ms2, ms1, 0, 1, 0, gpts)
+
+    c.execute("DELETE FROM cfi_matches WHERE id = %s", (match["id"],))
+    conn.commit()
+    conn.close()
+
+    await interaction.followup.send(
+        f"↩️ CFI match reverted: **{player1.display_name} {s1} — {s2} {player2.display_name}** (Week {week})",
+        ephemeral=True
+    )
+
+
+def cfi_sort_key(p):
+    """Sort by: points DESC, GD DESC, goals_for DESC, first_points_ts ASC (None last)"""
+    gd = p["week_goals_for"] - p["week_goals_against"]
+    ts = p["first_points_ts"] if p["first_points_ts"] else datetime.max
+    return (-p["week_points"], -gd, -p["week_goals_for"], ts)
+
+
+@tree.command(name="cfitable", description="Show CFI standings for a league and group")
+@app_commands.describe(league="League number (1-6)", group="Group letter (A/B/C)")
+async def cfitable(interaction: discord.Interaction, league: int, group: str):
+    group = group.upper()
+    if league not in CFI_LEAGUE_NAMES or group not in ("A", "B", "C"):
+        await interaction.response.send_message("❌ Invalid league (1-6) or group (A/B/C).", ephemeral=True)
+        return
+
+    conn = get_db()
+    c = conn.cursor()
+    week = cfi_get_week(conn)
+    c.execute("SELECT * FROM cfi_players WHERE league=%s AND group_letter=%s ORDER BY week_points DESC", (league, group))
+    players = [dict(p) for p in c.fetchall()]
+    conn.close()
+
+    if not players:
+        await interaction.response.send_message("❌ No players found in that group.", ephemeral=True)
+        return
+
+    players.sort(key=cfi_sort_key)
+    league_name = CFI_LEAGUE_NAMES[league]
+
+    lines = []
+    for i, p in enumerate(players, 1):
+        member = interaction.guild.get_member(int(p["name"])) if p["name"].isdigit() else None
+        name = member.display_name if member else p["name"]
+        gd = p["week_goals_for"] - p["week_goals_against"]
+        gd_str = f"+{gd}" if gd > 0 else str(gd)
+        lines.append(
+            f"**{i}.** {name} — {p['week_points']}pts | "
+            f"W{p['week_wins']} D{p['week_draws']} L{p['week_losses']} | "
+            f"GD {gd_str} | GF {p['week_goals_for']}"
+        )
+
+    embed = discord.Embed(
+        title=f"📊 {league_name} League — Group {group} (Week {week})",
+        color=0x5865F2
+    )
+    embed.description = "\n".join(lines)
+    await interaction.response.send_message(embed=embed)
+
+
+@tree.command(name="cfigroup", description="Show your own CFI group standings")
+async def cfigroup(interaction: discord.Interaction):
+    uid = str(interaction.user.id)
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT * FROM cfi_players WHERE name=%s", (uid,))
+    me = c.fetchone()
+
+    if not me:
+        conn.close()
+        await interaction.response.send_message("❌ You are not in the CFI system.", ephemeral=True)
+        return
+
+    me = dict(me)
+    league = me["league"]
+    group_letter = me["group_letter"]
+    week = cfi_get_week(conn)
+
+    c.execute("SELECT * FROM cfi_players WHERE league=%s AND group_letter=%s", (league, group_letter))
+    players = [dict(p) for p in c.fetchall()]
+    conn.close()
+
+    players.sort(key=cfi_sort_key)
+    league_name = CFI_LEAGUE_NAMES[league]
+
+    lines = []
+    for i, p in enumerate(players, 1):
+        member = interaction.guild.get_member(int(p["name"])) if p["name"].isdigit() else None
+        name = member.display_name if member else p["name"]
+        gd = p["week_goals_for"] - p["week_goals_against"]
+        gd_str = f"+{gd}" if gd > 0 else str(gd)
+        marker = " ◀" if p["name"] == uid else ""
+        lines.append(
+            f"**{i}.** {name} — {p['week_points']}pts | "
+            f"W{p['week_wins']} D{p['week_draws']} L{p['week_losses']} | "
+            f"GD {gd_str}{marker}"
+        )
+
+    embed = discord.Embed(
+        title=f"📊 {league_name} League — Group {group_letter} (Week {week})",
+        color=0x5865F2
+    )
+    embed.description = "\n".join(lines)
+    await interaction.response.send_message(embed=embed)
+
+
+@tree.command(name="cfistandingsall", description="Show all CFI group standings (admin only)")
+@is_admin()
+async def cfistandingsall(interaction: discord.Interaction):
+    await interaction.response.defer()
+    conn = get_db()
+    c = conn.cursor()
+    week = cfi_get_week(conn)
+    c.execute("SELECT * FROM cfi_players ORDER BY league, group_letter, week_points DESC")
+    all_players = [dict(p) for p in c.fetchall()]
+    conn.close()
+
+    if not all_players:
+        await interaction.followup.send("❌ No players in CFI system yet.")
+        return
+
+    from itertools import groupby
+    embeds = []
+    grouped = {}
+    for p in all_players:
+        key = (p["league"], p["group_letter"])
+        grouped.setdefault(key, []).append(p)
+
+    embed = discord.Embed(title=f"📊 CFI All Standings — Week {week}", color=0x5865F2)
+    field_count = 0
+
+    for (league, group_letter) in sorted(grouped.keys()):
+        players = sorted(grouped[(league, group_letter)], key=cfi_sort_key)
+        league_name = CFI_LEAGUE_NAMES[league]
+        lines = []
+        for i, p in enumerate(players, 1):
+            member = interaction.guild.get_member(int(p["name"])) if p["name"].isdigit() else None
+            name = member.display_name if member else p["name"]
+            gd = p["week_goals_for"] - p["week_goals_against"]
+            gd_str = f"+{gd}" if gd > 0 else str(gd)
+            lines.append(f"**{i}.** {name} — {p['week_points']}pts GD{gd_str}")
+
+        if field_count >= 25:
+            embeds.append(embed)
+            embed = discord.Embed(color=0x5865F2)
+            field_count = 0
+
+        embed.add_field(name=f"{league_name} {group_letter}", value="\n".join(lines), inline=True)
+        field_count += 1
+
+    embeds.append(embed)
+    await interaction.followup.send(embeds=embeds[:10])
+
+
+@tree.command(name="cfiranking", description="Show global CFI points leaderboard")
+async def cfiranking(interaction: discord.Interaction):
+    conn = get_db()
+    c = conn.cursor()
+    week = cfi_get_week(conn)
+    if week < 2:
+        conn.close()
+        await interaction.response.send_message(
+            "⏳ Global points ranking starts from **Week 2**. Check back after the first week is processed!",
+            ephemeral=True
+        )
+        return
+
+    c.execute("SELECT * FROM cfi_players ORDER BY global_points DESC, first_points_ts ASC NULLS LAST LIMIT 50")
+    players = [dict(p) for p in c.fetchall()]
+    conn.close()
+
+    if not players:
+        await interaction.response.send_message("❌ No players found.", ephemeral=True)
+        return
+
+    lines = []
+    medals = {1: "🥇", 2: "🥈", 3: "🥉"}
+    for i, p in enumerate(players, 1):
+        member = interaction.guild.get_member(int(p["name"])) if p["name"].isdigit() else None
+        name = member.display_name if member else p["name"]
+        league_name = CFI_LEAGUE_NAMES.get(p["league"], "?")
+        prefix = medals.get(i, f"**{i}.**")
+        lines.append(f"{prefix} {name} — **{p['global_points']} pts** ({league_name} {p['group_letter']})")
+
+    embed = discord.Embed(title=f"🌍 CFI Global Ranking (Week {week})", color=0xffaa00)
+    embed.description = "\n".join(lines)
+    await interaction.response.send_message(embed=embed)
+
+
+@tree.command(name="cfiprofile", description="View a player's CFI profile")
+@app_commands.describe(player="Player to view (leave empty for yourself)")
+async def cfiprofile(interaction: discord.Interaction, player: discord.Member = None):
+    target = player or interaction.user
+    uid = str(target.id)
+
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT * FROM cfi_players WHERE name=%s", (uid,))
+    p = c.fetchone()
+    week = cfi_get_week(conn)
+    conn.close()
+
+    if not p:
+        await interaction.response.send_message(f"❌ **{target.display_name}** is not in the CFI system.", ephemeral=True)
+        return
+
+    p = dict(p)
+    league_name = CFI_LEAGUE_NAMES.get(p["league"], "?")
+    total_w = p["week_wins"] + p["week_draws"] + p["week_losses"]
+    total_all = p["all_time_wins"] + p["all_time_draws"] + p["all_time_losses"]
+    gd = p["week_goals_for"] - p["week_goals_against"]
+    gd_str = f"+{gd}" if gd > 0 else str(gd)
+    winrate = round(p["week_wins"] / total_w * 100) if total_w > 0 else 0
+    gpg = round(p["week_goals_for"] / total_w, 2) if total_w > 0 else 0
+
+    embed = discord.Embed(title=f"⚽ {target.display_name} — CFI Profile", color=0x5865F2)
+    embed.set_thumbnail(url=target.display_avatar.url)
+    embed.description = (
+        f"**League:** {league_name} — Group {p['group_letter']} (Week {week})\n\n"
+        f"**Weekly Record:** W{p['week_wins']} D{p['week_draws']} L{p['week_losses']}\n"
+        f"**Weekly Points:** {p['week_points']}\n"
+        f"**Win Rate:** {winrate}%\n"
+        f"**Goal Difference:** {gd_str}\n"
+        f"**Goals Per Game:** {gpg}\n"
+        f"**Global Points:** {p['global_points']}\n\n"
+        f"**All-Time:** W{p['all_time_wins']} D{p['all_time_draws']} L{p['all_time_losses']}\n"
+        f"**All-Time Goals:** {p['all_time_goals_for']} scored / {p['all_time_goals_against']} conceded"
+    )
+    await interaction.response.send_message(embed=embed)
+
+
+@tree.command(name="cfiprocessweek", description="Process end of week: promote/relegate players and reset stats (admin only)")
+@is_admin()
+async def cfiprocessweek(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+
+    conn = get_db()
+    c = conn.cursor()
+    week = cfi_get_week(conn)
+    season = cfi_get_season(conn)
+
+    # Save snapshot before changes
+    c.execute("DELETE FROM cfi_snapshot WHERE snapshot_week = %s", (week,))
+    c.execute("""
+        INSERT INTO cfi_snapshot
+            (name, league, group_letter, week_wins, week_draws, week_losses,
+             week_goals_for, week_goals_against, week_points, first_points_ts, snapshot_week)
+        SELECT name, league, group_letter, week_wins, week_draws, week_losses,
+               week_goals_for, week_goals_against, week_points, first_points_ts, %s
+        FROM cfi_players
+    """, (week,))
+
+    c.execute("SELECT * FROM cfi_players ORDER BY league, group_letter")
+    all_players = [dict(p) for p in c.fetchall()]
+
+    grouped = {}
+    for p in all_players:
+        key = (p["league"], p["group_letter"])
+        grouped.setdefault(key, []).append(p)
+
+    promotions = []   # (name, from_league, from_group, to_league, to_group)
+    relegations = []
+    stays = []
+
+    temp_league_bins = {l: {"A": [], "B": [], "C": []} for l in range(1, 7)}
+
+    for (league, group_letter), players in grouped.items():
+        players.sort(key=cfi_sort_key)
+
+        for i, p in enumerate(players):
+            name = p["name"]
+            if i == 0 and league > 1:
+                # Promoted — collect for redistribution
+                promotions.append(name)
+                temp_league_bins[league - 1]["_promoted"] = temp_league_bins[league - 1].get("_promoted", []) + [name]
+            elif i == len(players) - 1 and league < 6:
+                # Relegated
+                relegations.append(name)
+                temp_league_bins[league + 1]["_relegated"] = temp_league_bins[league + 1].get("_relegated", []) + [name]
+            else:
+                stays.append((name, league, group_letter))
+
+    # Build new assignments for each league
+    new_assignments = {}  # name -> (league, group)
+
+    # Process each league: stays + incoming promoted + incoming relegated
+    for league in range(1, 7):
+        incoming = (
+            temp_league_bins[league].get("_promoted", []) +
+            temp_league_bins[league].get("_relegated", [])
+        )
+        staying = [(n, g) for n, l, g in stays if l == league]
+        all_in_league = [n for n, g in staying] + incoming
+        # Randomly re-sort into 3 groups of 5
+        random.shuffle(all_in_league)
+        per_group = len(all_in_league) // 3
+        for gi, g in enumerate(["A", "B", "C"]):
+            for n in all_in_league[gi * per_group: (gi + 1) * per_group]:
+                new_assignments[n] = (league, g)
+        # Leftover (if any) go to group C
+        for n in all_in_league[3 * per_group:]:
+            new_assignments[n] = (league, "C")
+
+    # Apply new assignments & reset weekly stats
+    for name, (new_league, new_group) in new_assignments.items():
+        c.execute("""
+            UPDATE cfi_players SET
+                league=%s, group_letter=%s,
+                week_wins=0, week_draws=0, week_losses=0,
+                week_goals_for=0, week_goals_against=0,
+                week_points=0, first_points_ts=NULL
+            WHERE name=%s
+        """, (new_league, new_group, name))
+
+    new_week = week + 1
+    c.execute("UPDATE cfi_config SET value=%s WHERE key='current_week'", (str(new_week),))
+    conn.commit()
+    conn.close()
+
+    # Update Discord roles
+    failed = 0
+    for name, (new_league, new_group) in new_assignments.items():
+        if not name.isdigit():
+            continue
+        member = interaction.guild.get_member(int(name))
+        if member:
+            try:
+                await assign_cfi_role(interaction.guild, member, new_league, new_group)
+            except Exception:
+                failed += 1
+
+    prom_count = len(promotions)
+    rel_count = len(relegations)
+
+    await interaction.followup.send(
+        f"✅ **Week {week} processed!** Now starting **Week {new_week}**.\n"
+        f"⬆️ {prom_count} players promoted · ⬇️ {rel_count} players relegated\n"
+        f"All players reshuffled into new groups. Weekly stats reset."
+        + (f"\n⚠️ Failed to update roles for {failed} players." if failed else ""),
+        ephemeral=True
+    )
+
+
+@tree.command(name="cfirevertweek", description="Undo the last /cfiprocessweek (admin only)")
+@is_admin()
+async def cfirevertweek(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+
+    conn = get_db()
+    c = conn.cursor()
+    week = cfi_get_week(conn)
+    prev_week = week - 1
+
+    if prev_week < 1:
+        conn.close()
+        await interaction.followup.send("❌ Nothing to revert — already at Week 1.", ephemeral=True)
+        return
+
+    c.execute("SELECT COUNT(*) AS cnt FROM cfi_snapshot WHERE snapshot_week=%s", (prev_week,))
+    cnt = dict(c.fetchone())["cnt"]
+    if cnt == 0:
+        conn.close()
+        await interaction.followup.send(f"❌ No snapshot found for Week {prev_week}.", ephemeral=True)
+        return
+
+    # Restore from snapshot
+    c.execute("SELECT * FROM cfi_snapshot WHERE snapshot_week=%s", (prev_week,))
+    snapshots = [dict(r) for r in c.fetchall()]
+
+    for s in snapshots:
+        c.execute("""
+            UPDATE cfi_players SET
+                league=%s, group_letter=%s,
+                week_wins=%s, week_draws=%s, week_losses=%s,
+                week_goals_for=%s, week_goals_against=%s,
+                week_points=%s, first_points_ts=%s
+            WHERE name=%s
+        """, (s["league"], s["group_letter"], s["week_wins"], s["week_draws"], s["week_losses"],
+              s["week_goals_for"], s["week_goals_against"], s["week_points"], s["first_points_ts"], s["name"]))
+
+    c.execute("UPDATE cfi_config SET value=%s WHERE key='current_week'", (str(prev_week),))
+    conn.commit()
+    conn.close()
+
+    # Restore Discord roles
+    failed = 0
+    for s in snapshots:
+        name = s["name"]
+        if not name.isdigit():
+            continue
+        member = interaction.guild.get_member(int(name))
+        if member:
+            try:
+                await assign_cfi_role(interaction.guild, member, s["league"], s["group_letter"])
+            except Exception:
+                failed += 1
+
+    await interaction.followup.send(
+        f"↩️ Week reverted! Restored to **Week {prev_week}** state.\n"
+        f"All {len(snapshots)} players' stats and groups restored."
+        + (f"\n⚠️ Failed to update roles for {failed} players." if failed else ""),
+        ephemeral=True
+    )
+
+
+@tree.command(name="cfiaddplayer", description="Manually add a player to the CFI system (admin only)")
+@is_admin()
+@app_commands.describe(player="Player to add", league="League (1-6)", group="Group (A/B/C)")
+async def cfiaddplayer(interaction: discord.Interaction, player: discord.Member, league: int, group: str):
+    group = group.upper()
+    if league not in CFI_LEAGUE_NAMES or group not in ("A", "B", "C"):
+        await interaction.response.send_message("❌ Invalid league or group.", ephemeral=True)
+        return
+
+    uid = str(player.id)
+    conn = get_db()
+    c = conn.cursor()
+    season = cfi_get_season(conn)
+    c.execute("""
+        INSERT INTO cfi_players (name, league, group_letter, season)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT (name) DO UPDATE SET league=EXCLUDED.league, group_letter=EXCLUDED.group_letter
+    """, (uid, league, group, season))
+    conn.commit()
+    conn.close()
+
+    await assign_cfi_role(interaction.guild, player, league, group)
+    league_name = CFI_LEAGUE_NAMES[league]
+    await interaction.response.send_message(
+        f"✅ **{player.display_name}** added to **{league_name} League — Group {group}**.",
+        ephemeral=True
+    )
+
+
+@tree.command(name="cfischedule", description="Show remaining unplayed matches in your CFI group")
+async def cfischedule(interaction: discord.Interaction):
+    uid = str(interaction.user.id)
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT * FROM cfi_players WHERE name=%s", (uid,))
+    me = c.fetchone()
+
+    if not me:
+        conn.close()
+        await interaction.response.send_message("❌ You are not in the CFI system.", ephemeral=True)
+        return
+
+    me = dict(me)
+    league = me["league"]
+    group_letter = me["group_letter"]
+    week = cfi_get_week(conn)
+    season = cfi_get_season(conn)
+
+    c.execute("SELECT name FROM cfi_players WHERE league=%s AND group_letter=%s", (league, group_letter))
+    group_players = [dict(r)["name"] for r in c.fetchall()]
+
+    # All possible pairs
+    from itertools import combinations
+    all_pairs = list(combinations(group_players, 2))
+
+    # Already played this week
+    c.execute("""
+        SELECT player1, player2 FROM cfi_matches
+        WHERE league=%s AND group_letter=%s AND week=%s AND season=%s
+    """, (league, group_letter, week, season))
+    played_pairs = set()
+    for row in c.fetchall():
+        row = dict(row)
+        played_pairs.add(tuple(sorted([row["player1"], row["player2"]])))
+
+    conn.close()
+
+    remaining = [p for p in all_pairs if tuple(sorted(p)) not in played_pairs]
+    league_name = CFI_LEAGUE_NAMES[league]
+
+    if not remaining:
+        embed = discord.Embed(title=f"📅 {league_name} Group {group_letter} — Week {week}", color=0x5865F2)
+        embed.description = "✅ All matches in your group have been played this week!"
+        await interaction.response.send_message(embed=embed)
+        return
+
+    lines = []
+    for p1_id, p2_id in remaining:
+        m1 = interaction.guild.get_member(int(p1_id)) if p1_id.isdigit() else None
+        m2 = interaction.guild.get_member(int(p2_id)) if p2_id.isdigit() else None
+        n1 = m1.display_name if m1 else p1_id
+        n2 = m2.display_name if m2 else p2_id
+        lines.append(f"⚽ **{n1}** vs **{n2}**")
+
+    embed = discord.Embed(
+        title=f"📅 {league_name} Group {group_letter} — Week {week} Remaining",
+        color=0x5865F2
+    )
+    embed.description = "\n".join(lines)
+    await interaction.response.send_message(embed=embed)
 
 
 bot.run(BOT_TOKEN)
