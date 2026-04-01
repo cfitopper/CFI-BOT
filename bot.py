@@ -4678,10 +4678,17 @@ async def cfirevertweek(interaction: discord.Interaction):
 
 @tree.command(name="cfiaddplayer", description="Manually add a player to the CFI system (admin only)")
 @is_admin()
-@app_commands.describe(player="Player to add", league="League (1-6)", group="Group (A/B/C)")
-async def cfiaddplayer(interaction: discord.Interaction, player: discord.Member, league: int, group: str):
+@app_commands.describe(player="Player to add", league="Select a league", group="Select a group")
+@app_commands.autocomplete(league=cfi_league_autocomplete, group=cfi_group_autocomplete)
+async def cfiaddplayer(interaction: discord.Interaction, player: discord.Member, league: str, group: str):
+    try:
+        league_num = int(league)
+    except ValueError:
+        await interaction.response.send_message("❌ Invalid league.", ephemeral=True)
+        return
+
     group = group.upper()
-    if league not in CFI_LEAGUE_NAMES or group not in ("A", "B", "C"):
+    if league_num not in CFI_LEAGUE_NAMES or group not in ("A", "B", "C"):
         await interaction.response.send_message("❌ Invalid league or group.", ephemeral=True)
         return
 
@@ -4693,12 +4700,12 @@ async def cfiaddplayer(interaction: discord.Interaction, player: discord.Member,
         INSERT INTO cfi_players (name, league, group_letter, season)
         VALUES (%s, %s, %s, %s)
         ON CONFLICT (name) DO UPDATE SET league=EXCLUDED.league, group_letter=EXCLUDED.group_letter
-    """, (uid, league, group, season))
+    """, (uid, league_num, group, season))
     conn.commit()
     conn.close()
 
-    await assign_cfi_role(interaction.guild, player, league, group)
-    league_name = CFI_LEAGUE_NAMES[league]
+    await assign_cfi_role(interaction.guild, player, league_num, group)
+    league_name = CFI_LEAGUE_NAMES[league_num]
     await interaction.response.send_message(
         f"✅ **{player.display_name}** added to **{league_name} League — Group {group}**.",
         ephemeral=True
