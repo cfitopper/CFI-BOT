@@ -4503,6 +4503,8 @@ async def cfiprofile(interaction: discord.Interaction, player: discord.Member):
     c.execute("SELECT * FROM cfi_players WHERE name=%s", (uid,))
     p = c.fetchone()
     week = cfi_get_week(conn)
+    c.execute("SELECT wins, losses, draws, goals FROM players WHERE name=%s", (uid,))
+    ranked_row = c.fetchone()
     conn.close()
 
     if not p:
@@ -4512,7 +4514,20 @@ async def cfiprofile(interaction: discord.Interaction, player: discord.Member):
     p = dict(p)
     league_name = CFI_LEAGUE_NAMES.get(p["league"], "?")
 
-    # All-time stats
+    # Ranked stats
+    if ranked_row:
+        ranked_row = dict(ranked_row)
+        r_total = ranked_row["wins"] + ranked_row["losses"] + ranked_row.get("draws", 0)
+        r_wr = round(ranked_row["wins"] / r_total * 100) if r_total > 0 else 0
+        ranked_section = (
+            f"**— Ranked Stats —**\n"
+            f"W{ranked_row['wins']} D{ranked_row.get('draws', 0)} L{ranked_row['losses']} | {r_wr}% winrate\n"
+            f"Goals: {ranked_row['goals']} | Matches: {r_total}\n\n"
+        )
+    else:
+        ranked_section = ""
+
+    # CFI league all-time stats
     total_all = p["all_time_wins"] + p["all_time_draws"] + p["all_time_losses"]
     at_wr = round(p["all_time_wins"] / total_all * 100) if total_all > 0 else 0
     at_gd = p["all_time_goals_for"] - p["all_time_goals_against"]
@@ -4530,7 +4545,8 @@ async def cfiprofile(interaction: discord.Interaction, player: discord.Member):
     embed.description = (
         f"**League:** {league_name} — Group {p['group_letter']} (Week {week})\n"
         f"**Global Points:** {p['global_points']}\n\n"
-        f"**— All-Time —**\n"
+        f"{ranked_section}"
+        f"**— CFI League All-Time —**\n"
         f"W{p['all_time_wins']} D{p['all_time_draws']} L{p['all_time_losses']} | {at_wr}% winrate\n"
         f"GF {p['all_time_goals_for']} GA {p['all_time_goals_against']} | GD {at_gd_str} | {at_gpg} goals/game\n\n"
         f"**— This Week —**\n"
