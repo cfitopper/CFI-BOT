@@ -4347,14 +4347,13 @@ async def cfibracket(interaction: discord.Interaction):
         key = (p["league"], p["group_letter"])
         grouped.setdefault(key, []).append(p)
 
-    embed = discord.Embed(title=f"📊 CFI Full Bracket — Week {week}", color=0x5865F2)
-    field_count = 0
-    embeds = [embed]
+    embeds = []
+    current_lines = []
 
     for (league, group_letter) in sorted(grouped.keys()):
         players = sorted(grouped[(league, group_letter)], key=cfi_sort_key)
         league_name = CFI_LEAGUE_NAMES[league]
-        lines = []
+        current_lines.append(f"**{league_name} — Group {group_letter}**")
         for i, p in enumerate(players, 1):
             member = interaction.guild.get_member(int(p["name"])) if p["name"].isdigit() else None
             name = member.display_name if member else p["name"]
@@ -4362,14 +4361,25 @@ async def cfibracket(interaction: discord.Interaction):
             gd_str = f"+{gd}" if gd > 0 else str(gd)
             total = p["week_wins"] + p["week_draws"] + p["week_losses"]
             wr = f"{round(p['week_wins']/total*100)}%" if total > 0 else "0%"
-            lines.append(f"**{i}.** {name} — {p['week_points']}pts | W{p['week_wins']}D{p['week_draws']}L{p['week_losses']} {wr} | GD{gd_str} GF{p['week_goals_for']}")
+            current_lines.append(
+                f"**{i}.** {name} — {p['week_points']}pts | W{p['week_wins']}D{p['week_draws']}L{p['week_losses']} {wr} | GD{gd_str} GF{p['week_goals_for']}"
+            )
+        current_lines.append("")
 
-        if field_count >= 25:
-            embeds.append(discord.Embed(color=0x5865F2))
-            field_count = 0
+        # Split into new embed if description getting too long
+        if len("\n".join(current_lines)) > 3800:
+            embeds.append(discord.Embed(color=0x5865F2, description="\n".join(current_lines[:-1])))
+            current_lines = []
 
-        embeds[-1].add_field(name=f"{league_name} {group_letter}", value="\n".join(lines), inline=True)
-        field_count += 1
+    if current_lines:
+        title = f"📊 CFI Full Bracket — Week {week}" if not embeds else None
+        e = discord.Embed(color=0x5865F2, description="\n".join(current_lines))
+        if title:
+            e.title = title
+        embeds.append(e)
+
+    if embeds:
+        embeds[0].title = f"📊 CFI Full Bracket — Week {week}"
 
     await interaction.followup.send(embeds=embeds[:10])
 
