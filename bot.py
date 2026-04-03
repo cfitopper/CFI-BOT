@@ -3853,8 +3853,14 @@ async def cfiseasonstart(interaction: discord.Interaction):
     c = conn.cursor()
     season = cfi_get_season(conn)
 
-    # Clear all existing players so standings match the new bracket exactly
-    c.execute("DELETE FROM cfi_players")
+    assigned_uids = [str(m.id) for m, l, g in assignments]
+
+    # Remove players no longer in the new assignments (lost CFI-Participant role)
+    if assigned_uids:
+        c.execute(
+            "DELETE FROM cfi_players WHERE name NOT IN %s",
+            (tuple(assigned_uids),)
+        )
 
     for member, league, group in assignments:
         uid = str(member.id)
@@ -3862,6 +3868,13 @@ async def cfiseasonstart(interaction: discord.Interaction):
             INSERT INTO cfi_players (name, league, group_letter, season,
                 week_wins, week_draws, week_losses, week_goals_for, week_goals_against, week_points)
             VALUES (%s, %s, %s, %s, 0, 0, 0, 0, 0, 0)
+            ON CONFLICT (name) DO UPDATE SET
+                league = EXCLUDED.league,
+                group_letter = EXCLUDED.group_letter,
+                season = EXCLUDED.season,
+                week_wins = 0, week_draws = 0, week_losses = 0,
+                week_goals_for = 0, week_goals_against = 0,
+                week_points = 0, first_points_ts = NULL
         """, (uid, league, group, season))
 
     c.execute("UPDATE cfi_config SET value = '1' WHERE key = 'current_week'")
