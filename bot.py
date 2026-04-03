@@ -774,6 +774,8 @@ async def profile(interaction: discord.Interaction, player: discord.Member):
     c = conn.cursor()
     c.execute("SELECT name, tier, rank_in_tier FROM players ORDER BY rank_in_tier ASC")
     all_p = [dict(r) for r in c.fetchall()]
+    c.execute("SELECT * FROM cfi_players WHERE name=%s", (uid,))
+    cfi_p = c.fetchone()
     conn.close()
 
     global_rank = 1
@@ -786,22 +788,15 @@ async def profile(interaction: discord.Interaction, player: discord.Member):
             continue
         break
 
-    # Also fetch CFI stats
-    conn2 = get_db()
-    c2 = conn2.cursor()
-    c2.execute("SELECT * FROM cfi_players WHERE name=%s", (uid,))
-    cfi_p = c2.fetchone()
-    c2.execute("SELECT golden_boot_goals FROM players WHERE name=%s", (uid,))
-    gb_row = c2.fetchone()
-    conn2.close()
+    licensed = p.get("licensed", "No")
+    playstyle = p.get("playstyle", "Balanced")
+    gb_goals = p.get("golden_boot_goals", 0)
 
     embed = discord.Embed(title=f"⚽ {display_name}", color=0xffaa00)
     embed.set_thumbnail(url=player.display_avatar.url)
-    licensed = p.get("licensed", "No")
-    playstyle = p.get("playstyle", "Balanced")
-    gb_goals = dict(gb_row)["golden_boot_goals"] if gb_row else 0
 
-    base_desc = (
+    desc = (
+        f"**— CFI Season 1 Stats —**\n"
         f"**Tier:** {p['tier']}\n"
         f"**Global Rank:** #{global_rank}\n"
         f"**Wins:** {p['wins']}\n"
@@ -822,8 +817,8 @@ async def profile(interaction: discord.Interaction, player: discord.Member):
         cfi_gd_str = f"+{cfi_gd}" if cfi_gd > 0 else str(cfi_gd)
         cfi_wr = round(cfi_p["week_wins"] / cfi_total * 100) if cfi_total > 0 else 0
         cfi_gpg = round(cfi_p["week_goals_for"] / cfi_total, 2) if cfi_total > 0 else 0
-        cfi_desc = (
-            f"\n\n**— CFI League Stats —**\n"
+        desc += (
+            f"\n\n**— CFI Season 2 Stats —**\n"
             f"**League:** {league_name} — Group {cfi_p['group_letter']}\n"
             f"**Weekly Record:** W{cfi_p['week_wins']} D{cfi_p['week_draws']} L{cfi_p['week_losses']}\n"
             f"**Weekly Points:** {cfi_p['week_points']}\n"
@@ -832,10 +827,8 @@ async def profile(interaction: discord.Interaction, player: discord.Member):
             f"**Goals Per Game:** {cfi_gpg}\n"
             f"**Global Points:** {cfi_p['global_points']}"
         )
-        embed.description = base_desc + cfi_desc
-    else:
-        embed.description = base_desc
 
+    embed.description = desc
     await interaction.followup.send(embed=embed)
 
 @tree.command(name="alltiers", description="Overview of all tiers and their players")
@@ -4508,86 +4501,6 @@ async def cfiranking(interaction: discord.Interaction):
     embed = discord.Embed(title=f"🌍 CFI Global Ranking (Week {week})", color=0xffaa00)
     embed.description = "\n".join(lines)
     await interaction.response.send_message(embed=embed)
-
-
-@tree.command(name="cfiprofile", description="View a player's CFI profile")
-@app_commands.describe(player="Player to view")
-async def cfiprofile(interaction: discord.Interaction, player: discord.Member):
-    await interaction.response.defer()
-    target = player
-    uid = str(target.id)
-
-    conn = get_db()
-    c = conn.cursor()
-    c.execute("SELECT * FROM cfi_players WHERE name=%s", (uid,))
-    cfi_p = c.fetchone()
-    week = cfi_get_week(conn)
-    c.execute("SELECT name, tier, rank_in_tier FROM players ORDER BY rank_in_tier ASC")
-    all_p = [dict(r) for r in c.fetchall()]
-    conn.close()
-
-    ranked = get_player(uid)
-
-    if not cfi_p:
-        await interaction.followup.send(f"❌ **{target.display_name}** is not in the CFI system.", ephemeral=True)
-        return
-
-    cfi_p = dict(cfi_p)
-    league_name = CFI_LEAGUE_NAMES.get(cfi_p["league"], "?")
-
-    embed = discord.Embed(title=f"⚽ {target.display_name}", color=0x5865F2)
-    embed.set_thumbnail(url=target.display_avatar.url)
-
-    if ranked:
-        total = ranked["wins"] + ranked["losses"]
-        winrate = round(ranked["wins"] / total * 100) if total > 0 else 0
-        global_rank = 1
-        for tier in TIERS:
-            for row in [x for x in all_p if x["tier"] == tier]:
-                if row["name"] == uid:
-                    break
-                global_rank += 1
-            else:
-                continue
-            break
-        gb_goals = ranked.get("golden_boot_goals", 0)
-        licensed = ranked.get("licensed", "No")
-        playstyle = ranked.get("playstyle", "Balanced")
-        base_desc = (
-            f"**— CFI Season 1 Stats —**\n"
-            f"**Tier:** {ranked['tier']}\n"
-            f"**Global Rank:** #{global_rank}\n"
-            f"**Wins:** {ranked['wins']}\n"
-            f"**Losses:** {ranked['losses']}\n"
-            f"**Goals Scored:** {ranked['goals']}\n"
-            f"**Winrate:** {winrate}%\n"
-            f"**Matches Played:** {total}\n"
-            f"**Golden Boot Goals:** {gb_goals}\n"
-            f"**Licensed:** {licensed}\n"
-            f"**Playstyle:** {playstyle}"
-        )
-    else:
-        base_desc = ""
-
-    total_w = cfi_p["week_wins"] + cfi_p["week_draws"] + cfi_p["week_losses"]
-    w_wr = round(cfi_p["week_wins"] / total_w * 100) if total_w > 0 else 0
-    w_gd = cfi_p["week_goals_for"] - cfi_p["week_goals_against"]
-    w_gd_str = f"+{w_gd}" if w_gd > 0 else str(w_gd)
-    w_gpg = round(cfi_p["week_goals_for"] / total_w, 2) if total_w > 0 else 0
-
-    cfi_desc = (
-        f"\n\n**— CFI Season 2 Stats —**\n"
-        f"**League:** {league_name} — Group {cfi_p['group_letter']}\n"
-        f"**Weekly Record:** W{cfi_p['week_wins']} D{cfi_p['week_draws']} L{cfi_p['week_losses']}\n"
-        f"**Weekly Points:** {cfi_p['week_points']}\n"
-        f"**Win Rate:** {w_wr}%\n"
-        f"**Goal Difference:** {w_gd_str}\n"
-        f"**Goals Per Game:** {w_gpg}\n"
-        f"**Global Points:** {cfi_p['global_points']}"
-    )
-
-    embed.description = base_desc + cfi_desc
-    await interaction.followup.send(embed=embed)
 
 
 @tree.command(name="cfiprocessweek", description="Process end of week: promote/relegate players and reset stats (admin only)")
