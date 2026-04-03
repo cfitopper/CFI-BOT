@@ -4853,66 +4853,67 @@ async def cfidqplayer(interaction: discord.Interaction, player: discord.Member):
 @tree.command(name="cfihelp", description="How the CFI works — full explanation for players")
 async def cfihelp(interaction: discord.Interaction):
     embed = discord.Embed(
-        title="🏆 CFI — Competitive Football Initiative",
+        title="CFI — Competitive Football Initiative",
         description="Welcome to the **CFI**! Here's everything you need to know to compete.",
         color=0x5865F2
     )
 
     embed.add_field(
-        name="📋 What is the CFI?",
+        name="What is the CFI?",
         value=(
             "The CFI is a competitive league system split into **6 leagues** and **3 groups** per league.\n"
             "Each group contains **5 players** who compete against each other every week.\n\n"
             "**Leagues (highest → lowest):**\n"
-            "🌌 Cosmic · 🌍 Universal · 🌠 Galaxy · 🌐 Global · 🏅 International · ⚡ Elite"
+            "Cosmic · Universal · Galaxy · Global · International · Elite\n\n"
+            "**Week 1:** tiers are not relevant yet — everyone starts fresh and placements are determined after the first week."
         ),
         inline=False
     )
 
     embed.add_field(
-        name="📅 How does a week work?",
+        name="How does a week work?",
         value=(
             "Each week you can play **up to 4 matches** within your group.\n"
             "You **cannot play the same opponent twice** in the same week.\n\n"
             "**Weekly points:**\n"
-            "✅ Win = **3 points**\n"
-            "🤝 Draw = **1 point**\n"
-            "❌ Loss = **0 points**\n\n"
+            "Win = **3 points**\n"
+            "Draw = **1 point**\n"
+            "Loss = **0 points**\n\n"
             "Group standings are decided by: weekly points → goal difference → goals scored → earliest points."
         ),
         inline=False
     )
 
     embed.add_field(
-        name="⬆️ Promotion & Relegation",
+        name="Promotion & Relegation",
         value=(
             "At the end of each week the standings are processed:\n"
-            "🥇 **#1** in your group → **promoted** to a higher league\n"
-            "💀 **Last place** in your group → **relegated** to a lower league\n"
-            "➡️ Everyone else **stays** at the same level\n\n"
+            "**#1** in your group → **promoted** to a higher league\n"
+            "**Last place** in your group → **relegated** to a lower league\n"
+            "Everyone else **stays** at the same level\n\n"
             "After processing, players are **randomly redistributed** into new groups A/B/C."
         ),
         inline=False
     )
 
     embed.add_field(
-        name="🌍 Global Points",
+        name="Global Points",
         value=(
             "Global points accumulate across all seasons and determine the **global leaderboard**.\n"
-            "⚠️ Week 1 does **not** count towards global points — they start from week 2 onwards.\n\n"
+            "Week 1 does **not** count towards global points — they start from week 2 onwards.\n\n"
             "**Points per league (win / draw):**\n"
-            "🌌 Cosmic: **75** / 37\n"
-            "🌍 Universal: **50** / 25\n"
-            "🌠 Galaxy: **35** / 17\n"
-            "🌐 Global: **20** / 10\n"
-            "🏅 International: **10** / 5\n"
-            "⚡ Elite: **5** / 2"
+            "Cosmic: **75** / 37\n"
+            "Universal: **50** / 25\n"
+            "Galaxy: **35** / 17\n"
+            "Global: **20** / 10\n"
+            "International: **10** / 5\n"
+            "Elite: **5** / 2"
         ),
         inline=False
     )
 
     embed.add_field(
-        name="⚽ Submitting a score",
+        name="Submitting a score",
         value=(
             "After a match, submit the result using:\n"
             "`/cfiscore` → select your opponent and enter the goals\n\n"
@@ -4923,10 +4924,9 @@ async def cfihelp(interaction: discord.Interaction):
     )
 
     embed.add_field(
-        name="📊 Useful commands",
+        name="Useful commands",
         value=(
             "`/cfiscore` — Submit a match result\n"
-            "`/cfibracket` — Full bracket for all leagues\n"
             "`/cfitable` — View your group standings\n"
             "`/cfischedule` — Remaining matches this week\n"
             "`/cfiranking` — Global points leaderboard\n"
