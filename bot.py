@@ -4555,7 +4555,8 @@ async def cfiprofile(interaction: discord.Interaction, player: discord.Member):
         playstyle = ranked.get("playstyle", "Balanced")
         base_desc = (
             f"**Tier:** {ranked['tier']}\n"
-            f"**Global Rank:** #{global_rank}\n"
+            f"**Global Rank:** #{global_rank}\n\n"
+            f"**— CFI Season 1 Stats —**\n"
             f"**Wins:** {ranked['wins']}\n"
             f"**Losses:** {ranked['losses']}\n"
             f"**Goals Scored:** {ranked['goals']}\n"
@@ -4575,7 +4576,7 @@ async def cfiprofile(interaction: discord.Interaction, player: discord.Member):
     w_gpg = round(cfi_p["week_goals_for"] / total_w, 2) if total_w > 0 else 0
 
     cfi_desc = (
-        f"\n\n**— CFI League Stats —**\n"
+        f"\n\n**— CFI Season 2 Stats —**\n"
         f"**League:** {league_name} — Group {cfi_p['group_letter']}\n"
         f"**Weekly Record:** W{cfi_p['week_wins']} D{cfi_p['week_draws']} L{cfi_p['week_losses']}\n"
         f"**Weekly Points:** {cfi_p['week_points']}\n"
