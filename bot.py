@@ -249,6 +249,17 @@ def is_admin():
         return True
     return app_commands.check(predicate)
 
+CFI_MOD_ROLES = ["CFI - Dev", "Admin", "BOSS", "Head-moderator (crew)", "Moderator (crew)", "League Moderator (crew)"]
+
+def is_cfi_mod():
+    async def predicate(interaction: discord.Interaction):
+        user_roles = [role.name.strip() for role in interaction.user.roles]
+        if not any(r in user_roles for r in CFI_MOD_ROLES):
+            await interaction.response.send_message("❌ You don't have permission to use this command.", ephemeral=True)
+            return False
+        return True
+    return app_commands.check(predicate)
+
 def is_cfi_dev():
     async def predicate(interaction: discord.Interaction):
         user_roles = [role.name.strip() for role in interaction.user.roles]
@@ -4193,18 +4204,6 @@ def cfi_sort_key(p):
     ts = p["first_points_ts"] if p["first_points_ts"] else datetime.max
     return (-p["week_points"], -gd, -p["week_goals_for"], ts)
 
-
-
-CFI_MOD_ROLES = ["CFI - Dev", "Admin", "BOSS", "Head-moderator (crew)", "Moderator (crew)", "League Moderator (crew)"]
-
-def is_cfi_mod():
-    async def predicate(interaction: discord.Interaction):
-        user_roles = [role.name.strip() for role in interaction.user.roles]
-        if not any(r in user_roles for r in CFI_MOD_ROLES):
-            await interaction.response.send_message("❌ You don't have permission to use this command.", ephemeral=True)
-            return False
-        return True
-    return app_commands.check(predicate)
 
 
 async def cfi_league_autocomplete(interaction: discord.Interaction, current: str):
