@@ -4429,19 +4429,13 @@ async def cfibracket(interaction: discord.Interaction):
     current_lines = []
 
     for (league, group_letter) in sorted(grouped.keys()):
-        players = sorted(grouped[(league, group_letter)], key=cfi_sort_key)
+        players = sorted(grouped[(league, group_letter)], key=lambda p: p["group_number"])
         league_name = CFI_LEAGUE_NAMES[league]
         current_lines.append(f"**{league_name} — Group {group_letter}**")
         for i, p in enumerate(players, 1):
             member = interaction.guild.get_member(int(p["name"])) if p["name"].isdigit() else None
             name = member.display_name if member else p["name"]
-            gd = p["week_goals_for"] - p["week_goals_against"]
-            gd_str = f"+{gd}" if gd > 0 else str(gd)
-            total = p["week_wins"] + p["week_draws"] + p["week_losses"]
-            wr = f"{round(p['week_wins']/total*100)}%" if total > 0 else "0%"
-            current_lines.append(
-                f"**{i}.** {name} — {p['week_points']}pts | W{p['week_wins']}D{p['week_draws']}L{p['week_losses']} {wr} | GD{gd_str} GF{p['week_goals_for']}"
-            )
+            current_lines.append(f"{i}. {name}")
         current_lines.append("")
 
         # Split into new embed if description getting too long
@@ -4450,14 +4444,11 @@ async def cfibracket(interaction: discord.Interaction):
             current_lines = []
 
     if current_lines:
-        title = f"📊 CFI Full Bracket — Week {week}" if not embeds else None
         e = discord.Embed(color=0x5865F2, description="\n".join(current_lines))
-        if title:
-            e.title = title
         embeds.append(e)
 
     if embeds:
-        embeds[0].title = f"📊 CFI Full Bracket — Week {week}"
+        embeds[0].title = "🏆 CFI Season — Full Bracket"
 
     await interaction.followup.send(embeds=embeds[:10])
 
