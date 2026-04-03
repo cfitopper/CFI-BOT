@@ -4521,7 +4521,7 @@ async def cfiprofile(interaction: discord.Interaction, player: discord.Member):
     c.execute("SELECT * FROM cfi_players WHERE name=%s", (uid,))
     p = c.fetchone()
     week = cfi_get_week(conn)
-    c.execute("SELECT wins, losses, draws, goals FROM players WHERE name=%s", (uid,))
+    c.execute("SELECT wins, losses, goals FROM players WHERE name=%s", (uid,))
     ranked_row = c.fetchone()
     conn.close()
 
@@ -4535,11 +4535,11 @@ async def cfiprofile(interaction: discord.Interaction, player: discord.Member):
     # Ranked stats
     if ranked_row:
         ranked_row = dict(ranked_row)
-        r_total = ranked_row["wins"] + ranked_row["losses"] + ranked_row.get("draws", 0)
+        r_total = ranked_row["wins"] + ranked_row["losses"]
         r_wr = round(ranked_row["wins"] / r_total * 100) if r_total > 0 else 0
         ranked_section = (
             f"**— Ranked Stats —**\n"
-            f"W{ranked_row['wins']} D{ranked_row.get('draws', 0)} L{ranked_row['losses']} | {r_wr}% winrate\n"
+            f"W{ranked_row['wins']} L{ranked_row['losses']} | {r_wr}% winrate\n"
             f"Goals: {ranked_row['goals']} | Matches: {r_total}\n\n"
         )
     else:
