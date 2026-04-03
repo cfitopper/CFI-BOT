@@ -4273,10 +4273,10 @@ async def cfiunscore(interaction: discord.Interaction, player1: discord.Member, 
 
 
 def cfi_sort_key(p):
-    """Sort by: points DESC, GD DESC, goals_for DESC, first_points_ts ASC (None last)"""
+    """Sort by: points DESC, GD DESC, goals_for DESC, first_points_ts ASC (None last), group_number ASC"""
     gd = p["week_goals_for"] - p["week_goals_against"]
     ts = p["first_points_ts"] if p["first_points_ts"] else datetime.max
-    return (-p["week_points"], -gd, -p["week_goals_for"], ts)
+    return (-p["week_points"], -gd, -p["week_goals_for"], ts, p["group_number"])
 
 
 
