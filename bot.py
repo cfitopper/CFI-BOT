@@ -3105,7 +3105,10 @@ async def on_interaction(interaction: discord.Interaction):
         count_global = (week >= 2)
 
         def update_cfi_player(name, gf, ga, w, d, l, gpts):
-            pts = (50 if w else (25 if d else 0)) + gf
+            if week == 1:
+                pts = (50 if w else (25 if d else 0)) + gf
+            else:
+                pts = 3 if w else (1 if d else 0)
             c.execute("""
                 UPDATE cfi_players SET
                     week_wins = week_wins + %s,
@@ -4165,7 +4168,10 @@ async def cfimatchscore(interaction: discord.Interaction, player1: discord.Membe
     """, (p1_id, p2_id, s1, s2, league, group_letter, week, season, now.isoformat(), str(interaction.user.id)))
 
     def upd(name, gf, ga, w, d, l, gpts):
-        pts = (50 if w else (25 if d else 0)) + gf
+        if week == 1:
+            pts = (50 if w else (25 if d else 0)) + gf
+        else:
+            pts = 3 if w else (1 if d else 0)
         c.execute("""
             UPDATE cfi_players SET
                 week_wins=week_wins+%s, week_draws=week_draws+%s, week_losses=week_losses+%s,
@@ -4875,11 +4881,15 @@ async def cfihelp(interaction: discord.Interaction):
         value=(
             "Each week you can play **up to 4 matches** within your group.\n"
             "You **cannot play the same opponent twice** in the same week.\n\n"
-            "**Weekly points:**\n"
+            "**Week 1 points:**\n"
             "Win = **50 points**\n"
             "Draw = **25 points**\n"
             "Loss = **0 points**\n"
             "Goal scored = **1 point**\n\n"
+            "**Week 2+ points:**\n"
+            "Win = **3 points**\n"
+            "Draw = **1 point**\n"
+            "Loss = **0 points**\n\n"
             "Group standings are decided by: weekly points → goal difference → goals scored → earliest points."
         ),
         inline=False
