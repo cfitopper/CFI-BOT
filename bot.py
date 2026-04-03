@@ -1908,6 +1908,7 @@ def setup_cfi_db(conn):
             name TEXT PRIMARY KEY,
             league INTEGER DEFAULT 6,
             group_letter TEXT DEFAULT 'A',
+            group_number INTEGER DEFAULT 1,
             week_wins INTEGER DEFAULT 0,
             week_draws INTEGER DEFAULT 0,
             week_losses INTEGER DEFAULT 0,
@@ -1977,6 +1978,7 @@ def setup_cfi_db(conn):
         ("week_goals_against",     "ALTER TABLE cfi_players ADD COLUMN week_goals_against INTEGER DEFAULT 0"),
         ("first_points_ts",        "ALTER TABLE cfi_players ADD COLUMN first_points_ts TIMESTAMP"),
         ("season",                 "ALTER TABLE cfi_players ADD COLUMN season INTEGER DEFAULT 2"),
+        ("group_number",           "ALTER TABLE cfi_players ADD COLUMN group_number INTEGER DEFAULT 1"),
     ]
     for col, sql in migrations:
         try:
@@ -1984,6 +1986,22 @@ def setup_cfi_db(conn):
             conn.commit()
         except Exception:
             conn.rollback()
+
+    # Sync group_number from group_letter for existing rows
+    c.execute("""
+        UPDATE cfi_players SET group_number = CASE group_letter
+            WHEN 'A' THEN 1
+            WHEN 'B' THEN 2
+            WHEN 'C' THEN 3
+            ELSE 1
+        END
+        WHERE group_number IS DISTINCT FROM CASE group_letter
+            WHEN 'A' THEN 1
+            WHEN 'B' THEN 2
+            WHEN 'C' THEN 3
+            ELSE 1
+        END
+    """)
 
     conn.commit()
 
@@ -3866,20 +3884,23 @@ async def cfiseasonstart(interaction: discord.Interaction):
             (tuple(assigned_uids),)
         )
 
+    group_number_map = {"A": 1, "B": 2, "C": 3}
     for member, league, group in assignments:
         uid = str(member.id)
+        group_num = group_number_map.get(group, 1)
         c.execute("""
-            INSERT INTO cfi_players (name, league, group_letter, season,
+            INSERT INTO cfi_players (name, league, group_letter, group_number, season,
                 week_wins, week_draws, week_losses, week_goals_for, week_goals_against, week_points)
-            VALUES (%s, %s, %s, %s, 0, 0, 0, 0, 0, 0)
+            VALUES (%s, %s, %s, %s, %s, 0, 0, 0, 0, 0, 0)
             ON CONFLICT (name) DO UPDATE SET
                 league = EXCLUDED.league,
                 group_letter = EXCLUDED.group_letter,
+                group_number = EXCLUDED.group_number,
                 season = EXCLUDED.season,
                 week_wins = 0, week_draws = 0, week_losses = 0,
                 week_goals_for = 0, week_goals_against = 0,
                 week_points = 0, first_points_ts = NULL
-        """, (uid, league, group, season))
+        """, (uid, league, group, group_num, season))
 
     c.execute("UPDATE cfi_config SET value = '1' WHERE key = 'current_week'")
     conn.commit()
