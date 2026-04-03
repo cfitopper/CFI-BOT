@@ -4429,7 +4429,7 @@ async def cfibracket(interaction: discord.Interaction):
     current_lines = []
 
     for (league, group_letter) in sorted(grouped.keys()):
-        players = sorted(grouped[(league, group_letter)], key=lambda p: p["group_number"])
+        players = sorted(grouped[(league, group_letter)], key=cfi_sort_key)
         league_name = CFI_LEAGUE_NAMES[league]
         current_lines.append(f"**{league_name} — Group {group_letter}**")
         for i, p in enumerate(players, 1):
