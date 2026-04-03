@@ -3804,8 +3804,8 @@ async def rankedphenomenonmatches(interaction: discord.Interaction):
 # CFI LEAGUE COMMANDS
 # ─────────────────────────────────────────
 
-@tree.command(name="cfiseasonstart", description="Start the CFI season: randomly distribute all @CFI-Participant players into leagues (admin only)")
-@is_admin()
+@tree.command(name="cfiseasonstart", description="Start the CFI season: randomly distribute all @CFI-Participant players into leagues")
+@is_cfi_mod()
 async def cfiseasonstart(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
 
@@ -3918,6 +3918,11 @@ async def cfiseasonstart(interaction: discord.Interaction):
 async def cfiscore(interaction: discord.Interaction, opponent: discord.Member, goals_you: int, goals_opponent: int):
     uid = str(interaction.user.id)
     opp_id = str(opponent.id)
+
+    participant_role = discord.utils.get(interaction.guild.roles, name="CFI-Participant")
+    if not participant_role or participant_role not in interaction.user.roles:
+        await interaction.response.send_message("❌ Only CFI participants can submit scores.", ephemeral=True)
+        return
 
     if uid == opp_id:
         await interaction.response.send_message("❌ You can't submit a score against yourself!", ephemeral=True)
@@ -4032,14 +4037,10 @@ async def cfiscore(interaction: discord.Interaction, opponent: discord.Member, g
 
 
 @tree.command(name="cfimatchscore", description="Manually set a CFI match score (mods only)")
+@is_cfi_mod()
 @app_commands.describe(player1="First player", player2="Second player", goals_player1="Goals for player 1", goals_player2="Goals for player 2")
 async def cfimatchscore(interaction: discord.Interaction, player1: discord.Member, player2: discord.Member, goals_player1: int, goals_player2: int):
     await interaction.response.defer(ephemeral=True)
-
-    user_roles = [r.name for r in interaction.user.roles]
-    if not any(r in user_roles for r in RANKED_MOD_ROLES):
-        await interaction.followup.send("❌ You don't have permission to use this command.", ephemeral=True)
-        return
 
     p1_id = str(player1.id)
     p2_id = str(player2.id)
@@ -4116,8 +4117,8 @@ async def cfimatchscore(interaction: discord.Interaction, player1: discord.Membe
     )
 
 
-@tree.command(name="cfiunscore", description="Revert a CFI match between two players (admin only)")
-@is_admin()
+@tree.command(name="cfiunscore", description="Revert a CFI match between two players (mods only)")
+@is_cfi_mod()
 @app_commands.describe(player1="First player", player2="Second player")
 async def cfiunscore(interaction: discord.Interaction, player1: discord.Member, player2: discord.Member):
     await interaction.response.defer(ephemeral=True)
@@ -4196,6 +4197,15 @@ def cfi_sort_key(p):
 
 CFI_MOD_ROLES = ["CFI - Dev", "Admin", "BOSS", "Head-moderator (crew)", "Moderator (crew)", "League Moderator (crew)"]
 
+def is_cfi_mod():
+    async def predicate(interaction: discord.Interaction):
+        user_roles = [role.name.strip() for role in interaction.user.roles]
+        if not any(r in user_roles for r in CFI_MOD_ROLES):
+            await interaction.response.send_message("❌ You don't have permission to use this command.", ephemeral=True)
+            return False
+        return True
+    return app_commands.check(predicate)
+
 
 async def cfi_league_autocomplete(interaction: discord.Interaction, current: str):
     options = [
@@ -4217,13 +4227,10 @@ async def cfi_group_autocomplete(interaction: discord.Interaction, current: str)
     ]
 
 @tree.command(name="cfitable", description="Show CFI standings for a league and group (mods only)")
+@is_cfi_mod()
 @app_commands.describe(league="Select a league", group="Select a group")
 @app_commands.autocomplete(league=cfi_league_autocomplete, group=cfi_group_autocomplete)
 async def cfitable(interaction: discord.Interaction, league: str, group: str):
-    user_roles = [r.name for r in interaction.user.roles]
-    if not any(r in user_roles for r in CFI_MOD_ROLES):
-        await interaction.response.send_message("❌ You don't have permission to use this command.", ephemeral=True)
-        return
 
     try:
         league_num = int(league)
@@ -4273,13 +4280,10 @@ async def cfitable(interaction: discord.Interaction, league: str, group: str):
 
 
 @tree.command(name="cfigroups", description="Show all group standings for a CFI league (mods only)")
+@is_cfi_mod()
 @app_commands.describe(league="Select a league")
 @app_commands.autocomplete(league=cfi_league_autocomplete)
 async def cfigroups(interaction: discord.Interaction, league: str):
-    user_roles = [r.name for r in interaction.user.roles]
-    if not any(r in user_roles for r in CFI_MOD_ROLES):
-        await interaction.response.send_message("❌ You don't have permission to use this command.", ephemeral=True)
-        return
 
     try:
         league_num = int(league)
@@ -4329,6 +4333,7 @@ async def cfigroups(interaction: discord.Interaction, league: str):
 
 
 @tree.command(name="cfibracket", description="Show all CFI group standings for all leagues")
+@is_cfi_mod()
 async def cfibracket(interaction: discord.Interaction):
     await interaction.response.defer()
     conn = get_db()
@@ -4385,6 +4390,7 @@ async def cfibracket(interaction: discord.Interaction):
 
 
 @tree.command(name="cfiranking", description="Show global CFI points leaderboard")
+@is_cfi_mod()
 async def cfiranking(interaction: discord.Interaction):
     conn = get_db()
     c = conn.cursor()
@@ -4419,8 +4425,8 @@ async def cfiranking(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed)
 
 
-@tree.command(name="cfiprocessweek", description="Process end of week: promote/relegate players and reset stats (admin only)")
-@is_admin()
+@tree.command(name="cfiprocessweek", description="Process end of week: promote/relegate players and reset stats")
+@is_cfi_mod()
 async def cfiprocessweek(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
 
@@ -4538,8 +4544,8 @@ async def cfiprocessweek(interaction: discord.Interaction):
     asyncio.ensure_future(assign_process_roles())
 
 
-@tree.command(name="cfirevertweek", description="Undo the last /cfiprocessweek (admin only)")
-@is_admin()
+@tree.command(name="cfirevertweek", description="Undo the last /cfiprocessweek")
+@is_cfi_mod()
 async def cfirevertweek(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
 
@@ -4607,8 +4613,8 @@ async def cfirevertweek(interaction: discord.Interaction):
     asyncio.ensure_future(assign_revert_roles())
 
 
-@tree.command(name="cfiaddplayer", description="Add a player to the open spot in a CFI league (admin only)")
-@is_admin()
+@tree.command(name="cfiaddplayer", description="Add a player to the open spot in a CFI league")
+@is_cfi_mod()
 @app_commands.describe(player="Player to add", league="Select a league")
 @app_commands.autocomplete(league=cfi_league_autocomplete)
 async def cfiaddplayer(interaction: discord.Interaction, player: discord.Member, league: str):
@@ -4651,14 +4657,11 @@ async def cfiaddplayer(interaction: discord.Interaction, player: discord.Member,
     )
 
 
-@tree.command(name="cfischedule", description="Show remaining unplayed matches for a CFI league (mods only)")
+@tree.command(name="cfischedule", description="Show remaining unplayed matches for a CFI league")
+@is_cfi_mod()
 @app_commands.describe(league="Select a league")
 @app_commands.autocomplete(league=cfi_league_autocomplete)
 async def cfischedule(interaction: discord.Interaction, league: str):
-    user_roles = [r.name for r in interaction.user.roles]
-    if not any(r in user_roles for r in CFI_MOD_ROLES):
-        await interaction.response.send_message("❌ You don't have permission to use this command.", ephemeral=True)
-        return
 
     try:
         league_num = int(league)
@@ -4719,8 +4722,8 @@ async def cfischedule(interaction: discord.Interaction, league: str):
     await interaction.followup.send(embed=embed)
 
 
-@tree.command(name="cfiremoveplayer", description="Remove a player from CFI: delete their matches and remove them (admin only)")
-@is_admin()
+@tree.command(name="cfiremoveplayer", description="Remove a player from CFI")
+@is_cfi_mod()
 @app_commands.describe(player="Player to remove")
 async def cfidqplayer(interaction: discord.Interaction, player: discord.Member):
     await interaction.response.defer(ephemeral=True)
