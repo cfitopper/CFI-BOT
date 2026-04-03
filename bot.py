@@ -3105,7 +3105,10 @@ async def on_interaction(interaction: discord.Interaction):
         count_global = (week >= 2)
 
         def update_cfi_player(name, gf, ga, w, d, l, gpts):
-            pts = 3 if w else (1 if d else 0)
+            if week == 1:
+                pts = (50 if w else (25 if d else 0)) + gf
+            else:
+                pts = 3 if w else (1 if d else 0)
             c.execute("""
                 UPDATE cfi_players SET
                     week_wins = week_wins + %s,
@@ -4165,7 +4168,10 @@ async def cfimatchscore(interaction: discord.Interaction, player1: discord.Membe
     """, (p1_id, p2_id, s1, s2, league, group_letter, week, season, now.isoformat(), str(interaction.user.id)))
 
     def upd(name, gf, ga, w, d, l, gpts):
-        pts = 3 if w else (1 if d else 0)
+        if week == 1:
+            pts = (50 if w else (25 if d else 0)) + gf
+        else:
+            pts = 3 if w else (1 if d else 0)
         c.execute("""
             UPDATE cfi_players SET
                 week_wins=week_wins+%s, week_draws=week_draws+%s, week_losses=week_losses+%s,
