@@ -1990,6 +1990,55 @@ def setup_cfi_db(conn):
 
     conn.commit()
 
+    # Rebuild cfi_players if group_number is not in the correct column position (3rd)
+    c.execute("""
+        SELECT ordinal_position FROM information_schema.columns
+        WHERE table_name = 'cfi_players' AND column_name = 'group_number'
+    """)
+    row = c.fetchone()
+    if row and dict(row)["ordinal_position"] != 3:
+        c.execute("""
+            CREATE TABLE cfi_players_new (
+                name TEXT PRIMARY KEY,
+                league INTEGER DEFAULT 6,
+                group_number INTEGER DEFAULT 1,
+                group_letter TEXT DEFAULT 'A',
+                week_wins INTEGER DEFAULT 0,
+                week_draws INTEGER DEFAULT 0,
+                week_losses INTEGER DEFAULT 0,
+                week_goals_for INTEGER DEFAULT 0,
+                week_goals_against INTEGER DEFAULT 0,
+                week_points INTEGER DEFAULT 0,
+                first_points_ts TIMESTAMP,
+                global_points INTEGER DEFAULT 0,
+                all_time_wins INTEGER DEFAULT 0,
+                all_time_draws INTEGER DEFAULT 0,
+                all_time_losses INTEGER DEFAULT 0,
+                all_time_goals_for INTEGER DEFAULT 0,
+                all_time_goals_against INTEGER DEFAULT 0,
+                season INTEGER DEFAULT 2,
+                joined_at TIMESTAMP DEFAULT NOW()
+            )
+        """)
+        c.execute("""
+            INSERT INTO cfi_players_new
+                (name, league, group_number, group_letter,
+                 week_wins, week_draws, week_losses, week_goals_for, week_goals_against,
+                 week_points, first_points_ts, global_points,
+                 all_time_wins, all_time_draws, all_time_losses,
+                 all_time_goals_for, all_time_goals_against, season, joined_at)
+            SELECT
+                name, league, group_number, group_letter,
+                week_wins, week_draws, week_losses, week_goals_for, week_goals_against,
+                week_points, first_points_ts, global_points,
+                all_time_wins, all_time_draws, all_time_losses,
+                all_time_goals_for, all_time_goals_against, season, joined_at
+            FROM cfi_players
+        """)
+        c.execute("DROP TABLE cfi_players")
+        c.execute("ALTER TABLE cfi_players_new RENAME TO cfi_players")
+        conn.commit()
+
     # Recalculate all_time stats from cfi_matches (fixes missing stats from before migration)
     c.execute("SELECT name FROM cfi_players")
     all_players = [dict(r)["name"] for r in c.fetchall()]
