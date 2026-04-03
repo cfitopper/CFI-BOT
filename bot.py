@@ -4554,9 +4554,9 @@ async def cfiprofile(interaction: discord.Interaction, player: discord.Member):
         licensed = ranked.get("licensed", "No")
         playstyle = ranked.get("playstyle", "Balanced")
         base_desc = (
-            f"**Tier:** {ranked['tier']}\n"
-            f"**Global Rank:** #{global_rank}\n\n"
             f"**— CFI Season 1 Stats —**\n"
+            f"**Tier:** {ranked['tier']}\n"
+            f"**Global Rank:** #{global_rank}\n"
             f"**Wins:** {ranked['wins']}\n"
             f"**Losses:** {ranked['losses']}\n"
             f"**Goals Scored:** {ranked['goals']}\n"
