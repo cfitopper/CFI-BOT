@@ -4272,53 +4272,6 @@ async def cfitable(interaction: discord.Interaction, league: str, group: str):
     await interaction.response.send_message(embed=embed)
 
 
-@tree.command(name="cfigroup", description="Show your own CFI group standings")
-async def cfigroup(interaction: discord.Interaction):
-    uid = str(interaction.user.id)
-    conn = get_db()
-    c = conn.cursor()
-    c.execute("SELECT * FROM cfi_players WHERE name=%s", (uid,))
-    me = c.fetchone()
-
-    if not me:
-        conn.close()
-        await interaction.response.send_message("❌ You are not in the CFI system.", ephemeral=True)
-        return
-
-    me = dict(me)
-    league = me["league"]
-    group_letter = me["group_letter"]
-    week = cfi_get_week(conn)
-
-    c.execute("SELECT * FROM cfi_players WHERE league=%s AND group_letter=%s", (league, group_letter))
-    players = [dict(p) for p in c.fetchall()]
-    conn.close()
-
-    players.sort(key=cfi_sort_key)
-    league_name = CFI_LEAGUE_NAMES[league]
-
-    lines = []
-    for i, p in enumerate(players, 1):
-        member = interaction.guild.get_member(int(p["name"])) if p["name"].isdigit() else None
-        name = member.display_name if member else p["name"]
-        gd = p["week_goals_for"] - p["week_goals_against"]
-        gd_str = f"+{gd}" if gd > 0 else str(gd)
-        marker = " ◀" if p["name"] == uid else ""
-        lines.append(
-            f"**{i}.** {name} — {p['week_points']}pts | "
-            f"W{p['week_wins']} D{p['week_draws']} L{p['week_losses']} | "
-            f"GD {gd_str}{marker}"
-        )
-
-    embed = discord.Embed(
-        title=f"📊 {league_name} League — Group {group_letter} (Week {week})",
-        color=0x5865F2
-    )
-    embed.description = "\n".join(lines)
-    await interaction.response.send_message(embed=embed)
-
-
-
 @tree.command(name="cfigroups", description="Show all group standings for a CFI league (mods only)")
 @app_commands.describe(league="Select a league")
 @app_commands.autocomplete(league=cfi_league_autocomplete)
@@ -4375,50 +4328,13 @@ async def cfigroups(interaction: discord.Interaction, league: str):
     await interaction.response.send_message(embed=embed)
 
 
-    if league not in CFI_LEAGUE_NAMES:
-        await interaction.response.send_message("❌ Invalid league (1-6).", ephemeral=True)
-        return
-
-    conn = get_db()
-    c = conn.cursor()
-    week = cfi_get_week(conn)
-    c.execute("SELECT * FROM cfi_players WHERE league=%s ORDER BY group_letter, week_points DESC", (league,))
-    all_players = [dict(p) for p in c.fetchall()]
-    conn.close()
-
-    if not all_players:
-        await interaction.response.send_message("❌ No players found in this league.", ephemeral=True)
-        return
-
-    league_name = CFI_LEAGUE_NAMES[league]
-    embed = discord.Embed(title=f"📊 {league_name} League — Week {week}", color=0x5865F2)
-
-    for group_letter in ["A", "B", "C"]:
-        players = [p for p in all_players if p["group_letter"] == group_letter]
-        if not players:
-            continue
-        players.sort(key=cfi_sort_key)
-        lines = []
-        for i, p in enumerate(players, 1):
-            member = interaction.guild.get_member(int(p["name"])) if p["name"].isdigit() else None
-            name = member.display_name if member else p["name"]
-            gd = p["week_goals_for"] - p["week_goals_against"]
-            gd_str = f"+{gd}" if gd > 0 else str(gd)
-            total = p["week_wins"] + p["week_draws"] + p["week_losses"]
-            wr = f"{round(p['week_wins']/total*100)}%" if total > 0 else "0%"
-            lines.append(f"**{i}.** {name}\n{p['week_points']}pts | W{p['week_wins']}D{p['week_draws']}L{p['week_losses']} {wr} | GD{gd_str} GF{p['week_goals_for']}")
-        embed.add_field(name=f"Group {group_letter}", value="\n".join(lines), inline=True)
-
-    await interaction.response.send_message(embed=embed)
-
-
-@tree.command(name="cfistandingsall", description="Show all CFI group standings")
-async def cfistandingsall(interaction: discord.Interaction):
+@tree.command(name="cfibracket", description="Show all CFI group standings for all leagues")
+async def cfibracket(interaction: discord.Interaction):
     await interaction.response.defer()
     conn = get_db()
     c = conn.cursor()
     week = cfi_get_week(conn)
-    c.execute("SELECT * FROM cfi_players ORDER BY league, group_letter, week_points DESC")
+    c.execute("SELECT * FROM cfi_players ORDER BY league, group_letter")
     all_players = [dict(p) for p in c.fetchall()]
     conn.close()
 
@@ -4426,15 +4342,14 @@ async def cfistandingsall(interaction: discord.Interaction):
         await interaction.followup.send("❌ No players in CFI system yet.")
         return
 
-    from itertools import groupby
-    embeds = []
     grouped = {}
     for p in all_players:
         key = (p["league"], p["group_letter"])
         grouped.setdefault(key, []).append(p)
 
-    embed = discord.Embed(title=f"📊 CFI All Standings — Week {week}", color=0x5865F2)
+    embed = discord.Embed(title=f"📊 CFI Full Bracket — Week {week}", color=0x5865F2)
     field_count = 0
+    embeds = [embed]
 
     for (league, group_letter) in sorted(grouped.keys()):
         players = sorted(grouped[(league, group_letter)], key=cfi_sort_key)
@@ -4450,14 +4365,12 @@ async def cfistandingsall(interaction: discord.Interaction):
             lines.append(f"**{i}.** {name} — {p['week_points']}pts | W{p['week_wins']}D{p['week_draws']}L{p['week_losses']} {wr} | GD{gd_str} GF{p['week_goals_for']}")
 
         if field_count >= 25:
-            embeds.append(embed)
-            embed = discord.Embed(color=0x5865F2)
+            embeds.append(discord.Embed(color=0x5865F2))
             field_count = 0
 
-        embed.add_field(name=f"{league_name} {group_letter}", value="\n".join(lines), inline=True)
+        embeds[-1].add_field(name=f"{league_name} {group_letter}", value="\n".join(lines), inline=True)
         field_count += 1
 
-    embeds.append(embed)
     await interaction.followup.send(embeds=embeds[:10])
 
 
@@ -4466,13 +4379,6 @@ async def cfiranking(interaction: discord.Interaction):
     conn = get_db()
     c = conn.cursor()
     week = cfi_get_week(conn)
-    if week < 2:
-        conn.close()
-        await interaction.response.send_message(
-            "⏳ Global points ranking starts from **Week 2**. Check back after the first week is processed!",
-            ephemeral=True
-        )
-        return
 
     c.execute("SELECT * FROM cfi_players ORDER BY global_points DESC, first_points_ts ASC NULLS LAST LIMIT 50")
     players = [dict(p) for p in c.fetchall()]
