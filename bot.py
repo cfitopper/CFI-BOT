@@ -4875,7 +4875,12 @@ async def cfihelp(interaction: discord.Interaction):
         value=(
             "Each week you can play **up to 4 matches** within your group.\n"
             "You **cannot play the same opponent twice** in the same week.\n\n"
-            "**Weekly points:**\n"
+            "**Week 1 points (placement week):**\n"
+            "Win = **50 points**\n"
+            "Draw = **25 points**\n"
+            "Loss = **0 points**\n"
+            "Goal scored = **1 point**\n\n"
+            "**From week 2 onwards:**\n"
             "Win = **3 points**\n"
             "Draw = **1 point**\n"
             "Loss = **0 points**\n\n"
