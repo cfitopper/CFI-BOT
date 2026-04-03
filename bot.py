@@ -1987,21 +1987,6 @@ def setup_cfi_db(conn):
         except Exception:
             conn.rollback()
 
-    # Sync group_number from group_letter for existing rows
-    c.execute("""
-        UPDATE cfi_players SET group_number = CASE group_letter
-            WHEN 'A' THEN 1
-            WHEN 'B' THEN 2
-            WHEN 'C' THEN 3
-            ELSE 1
-        END
-        WHERE group_number IS DISTINCT FROM CASE group_letter
-            WHEN 'A' THEN 1
-            WHEN 'B' THEN 2
-            WHEN 'C' THEN 3
-            ELSE 1
-        END
-    """)
 
     conn.commit()
 
@@ -3867,15 +3852,15 @@ async def cfiseasonstart(interaction: discord.Interaction):
         g_idx = 0
         for gi, g in enumerate(groups):
             count = per_group + (1 if gi < remainder else 0)
-            for m in league_members[g_idx:g_idx + count]:
-                assignments.append((m, league, g))
+            for pos, m in enumerate(league_members[g_idx:g_idx + count], 1):
+                assignments.append((m, league, g, pos))
             g_idx += count
 
     conn = get_db()
     c = conn.cursor()
     season = cfi_get_season(conn)
 
-    assigned_uids = [str(m.id) for m, l, g in assignments]
+    assigned_uids = [str(m.id) for m, l, g, pos in assignments]
 
     # Remove players no longer in the new assignments (lost CFI-Participant role)
     if assigned_uids:
@@ -3884,10 +3869,8 @@ async def cfiseasonstart(interaction: discord.Interaction):
             (tuple(assigned_uids),)
         )
 
-    group_number_map = {"A": 1, "B": 2, "C": 3}
-    for member, league, group in assignments:
+    for member, league, group, group_num in assignments:
         uid = str(member.id)
-        group_num = group_number_map.get(group, 1)
         c.execute("""
             INSERT INTO cfi_players (name, league, group_letter, group_number, season,
                 week_wins, week_draws, week_losses, week_goals_for, week_goals_against, week_points)
@@ -3918,7 +3901,7 @@ async def cfiseasonstart(interaction: discord.Interaction):
     for league in range(1, 7):
         league_name = CFI_LEAGUE_NAMES[league]
         for g in ["A", "B", "C"]:
-            grp = [m.display_name for m, l, gr in assignments if l == league and gr == g]
+            grp = [m.display_name for m, l, gr, pos in assignments if l == league and gr == g]
             if grp:
                 description_lines.append(f"**{league_name} — Group {g}**")
                 for i, name in enumerate(grp, 1):
