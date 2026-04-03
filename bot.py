@@ -4511,67 +4511,82 @@ async def cfiranking(interaction: discord.Interaction):
 
 
 @tree.command(name="cfiprofile", description="View a player's CFI profile")
-@app_commands.describe(player="Player to view (leave empty for yourself)")
+@app_commands.describe(player="Player to view")
 async def cfiprofile(interaction: discord.Interaction, player: discord.Member):
+    await interaction.response.defer()
     target = player
     uid = str(target.id)
 
     conn = get_db()
     c = conn.cursor()
     c.execute("SELECT * FROM cfi_players WHERE name=%s", (uid,))
-    p = c.fetchone()
+    cfi_p = c.fetchone()
     week = cfi_get_week(conn)
-    c.execute("SELECT wins, losses, goals FROM players WHERE name=%s", (uid,))
-    ranked_row = c.fetchone()
+    c.execute("SELECT name, tier, rank_in_tier FROM players ORDER BY rank_in_tier ASC")
+    all_p = [dict(r) for r in c.fetchall()]
     conn.close()
 
-    if not p:
-        await interaction.response.send_message(f"❌ **{target.display_name}** is not in the CFI system.", ephemeral=True)
+    ranked = get_player(uid)
+
+    if not cfi_p:
+        await interaction.followup.send(f"❌ **{target.display_name}** is not in the CFI system.", ephemeral=True)
         return
 
-    p = dict(p)
-    league_name = CFI_LEAGUE_NAMES.get(p["league"], "?")
+    cfi_p = dict(cfi_p)
+    league_name = CFI_LEAGUE_NAMES.get(cfi_p["league"], "?")
 
-    # Ranked stats
-    if ranked_row:
-        ranked_row = dict(ranked_row)
-        r_total = ranked_row["wins"] + ranked_row["losses"]
-        r_wr = round(ranked_row["wins"] / r_total * 100) if r_total > 0 else 0
-        ranked_section = (
-            f"**— Ranked Stats —**\n"
-            f"W{ranked_row['wins']} L{ranked_row['losses']} | {r_wr}% winrate\n"
-            f"Goals: {ranked_row['goals']} | Matches: {r_total}\n\n"
+    embed = discord.Embed(title=f"⚽ {target.display_name}", color=0x5865F2)
+    embed.set_thumbnail(url=target.display_avatar.url)
+
+    if ranked:
+        total = ranked["wins"] + ranked["losses"]
+        winrate = round(ranked["wins"] / total * 100) if total > 0 else 0
+        global_rank = 1
+        for tier in TIERS:
+            for row in [x for x in all_p if x["tier"] == tier]:
+                if row["name"] == uid:
+                    break
+                global_rank += 1
+            else:
+                continue
+            break
+        gb_goals = ranked.get("golden_boot_goals", 0)
+        licensed = ranked.get("licensed", "No")
+        playstyle = ranked.get("playstyle", "Balanced")
+        base_desc = (
+            f"**Tier:** {ranked['tier']}\n"
+            f"**Global Rank:** #{global_rank}\n"
+            f"**Wins:** {ranked['wins']}\n"
+            f"**Losses:** {ranked['losses']}\n"
+            f"**Goals Scored:** {ranked['goals']}\n"
+            f"**Winrate:** {winrate}%\n"
+            f"**Matches Played:** {total}\n"
+            f"**Golden Boot Goals:** {gb_goals}\n"
+            f"**Licensed:** {licensed}\n"
+            f"**Playstyle:** {playstyle}"
         )
     else:
-        ranked_section = ""
+        base_desc = ""
 
-    # CFI league all-time stats
-    total_all = p["all_time_wins"] + p["all_time_draws"] + p["all_time_losses"]
-    at_wr = round(p["all_time_wins"] / total_all * 100) if total_all > 0 else 0
-    at_gd = p["all_time_goals_for"] - p["all_time_goals_against"]
-    at_gd_str = f"+{at_gd}" if at_gd > 0 else str(at_gd)
-    at_gpg = round(p["all_time_goals_for"] / total_all, 2) if total_all > 0 else 0
-
-    # This week stats
-    total_w = p["week_wins"] + p["week_draws"] + p["week_losses"]
-    w_wr = round(p["week_wins"] / total_w * 100) if total_w > 0 else 0
-    w_gd = p["week_goals_for"] - p["week_goals_against"]
+    total_w = cfi_p["week_wins"] + cfi_p["week_draws"] + cfi_p["week_losses"]
+    w_wr = round(cfi_p["week_wins"] / total_w * 100) if total_w > 0 else 0
+    w_gd = cfi_p["week_goals_for"] - cfi_p["week_goals_against"]
     w_gd_str = f"+{w_gd}" if w_gd > 0 else str(w_gd)
+    w_gpg = round(cfi_p["week_goals_for"] / total_w, 2) if total_w > 0 else 0
 
-    embed = discord.Embed(title=f"⚽ {target.display_name} — CFI Profile", color=0x5865F2)
-    embed.set_thumbnail(url=target.display_avatar.url)
-    embed.description = (
-        f"**League:** {league_name} — Group {p['group_letter']} (Week {week})\n"
-        f"**Global Points:** {p['global_points']}\n\n"
-        f"{ranked_section}"
-        f"**— CFI League All-Time —**\n"
-        f"W{p['all_time_wins']} D{p['all_time_draws']} L{p['all_time_losses']} | {at_wr}% winrate\n"
-        f"GF {p['all_time_goals_for']} GA {p['all_time_goals_against']} | GD {at_gd_str} | {at_gpg} goals/game\n\n"
-        f"**— This Week —**\n"
-        f"W{p['week_wins']} D{p['week_draws']} L{p['week_losses']} | {w_wr}% winrate\n"
-        f"Points: {p['week_points']} | GD {w_gd_str} | GF {p['week_goals_for']}"
+    cfi_desc = (
+        f"\n\n**— CFI League Stats —**\n"
+        f"**League:** {league_name} — Group {cfi_p['group_letter']}\n"
+        f"**Weekly Record:** W{cfi_p['week_wins']} D{cfi_p['week_draws']} L{cfi_p['week_losses']}\n"
+        f"**Weekly Points:** {cfi_p['week_points']}\n"
+        f"**Win Rate:** {w_wr}%\n"
+        f"**Goal Difference:** {w_gd_str}\n"
+        f"**Goals Per Game:** {w_gpg}\n"
+        f"**Global Points:** {cfi_p['global_points']}"
     )
-    await interaction.response.send_message(embed=embed)
+
+    embed.description = base_desc + cfi_desc
+    await interaction.followup.send(embed=embed)
 
 
 @tree.command(name="cfiprocessweek", description="Process end of week: promote/relegate players and reset stats (admin only)")
