@@ -1907,8 +1907,8 @@ def setup_cfi_db(conn):
         CREATE TABLE IF NOT EXISTS cfi_players (
             name TEXT PRIMARY KEY,
             league INTEGER DEFAULT 6,
-            group_letter TEXT DEFAULT 'A',
             group_number INTEGER DEFAULT 1,
+            group_letter TEXT DEFAULT 'A',
             week_wins INTEGER DEFAULT 0,
             week_draws INTEGER DEFAULT 0,
             week_losses INTEGER DEFAULT 0,
