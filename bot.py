@@ -3828,35 +3828,40 @@ async def cfiseasonstart(interaction: discord.Interaction):
 
     random.shuffle(members)
     total = len(members)
-    # Distribute as evenly as possible across 6 leagues, max 15 per league
-    per_league = min(15, total // 6)
-    # Assign first 6*per_league players; leftover stay unassigned (shouldn't happen per rules)
+
+    # Exactly 5 per group, 3 groups per league, 6 leagues = 90 players
+    # If not exactly 90, distribute as evenly as possible (5 per group target)
     assignments = []
     idx = 0
+    groups = ["A", "B", "C"]
     for league in range(1, 7):
-        group_players = members[idx:idx + per_league]
-        idx += per_league
-        random.shuffle(group_players)
-        per_group = per_league // 3
-        for gi, g in enumerate(["A", "B", "C"]):
-            for m in group_players[gi * per_group:(gi + 1) * per_group]:
+        league_members = members[idx:idx + 15]
+        idx += 15
+        if not league_members:
+            break
+        random.shuffle(league_members)
+        per_group = len(league_members) // 3
+        remainder = len(league_members) % 3
+        g_idx = 0
+        for gi, g in enumerate(groups):
+            count = per_group + (1 if gi < remainder else 0)
+            for m in league_members[g_idx:g_idx + count]:
                 assignments.append((m, league, g))
+            g_idx += count
 
     conn = get_db()
     c = conn.cursor()
     season = cfi_get_season(conn)
 
+    # Clear all existing players so standings match the new bracket exactly
+    c.execute("DELETE FROM cfi_players")
+
     for member, league, group in assignments:
         uid = str(member.id)
         c.execute("""
-            INSERT INTO cfi_players (name, league, group_letter, season)
-            VALUES (%s, %s, %s, %s)
-            ON CONFLICT (name) DO UPDATE SET
-                league = EXCLUDED.league,
-                group_letter = EXCLUDED.group_letter,
-                week_wins = 0, week_draws = 0, week_losses = 0,
-                week_goals_for = 0, week_goals_against = 0, week_points = 0,
-                first_points_ts = NULL, season = EXCLUDED.season
+            INSERT INTO cfi_players (name, league, group_letter, season,
+                week_wins, week_draws, week_losses, week_goals_for, week_goals_against, week_points)
+            VALUES (%s, %s, %s, %s, 0, 0, 0, 0, 0, 0)
         """, (uid, league, group, season))
 
     c.execute("UPDATE cfi_config SET value = '1' WHERE key = 'current_week'")
