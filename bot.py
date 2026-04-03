@@ -3887,7 +3887,7 @@ async def cfiseasonstart(interaction: discord.Interaction):
 
     # Send ephemeral confirmation immediately
     await interaction.followup.send(
-        f"✅ CFI Season started! **{len(assignments)}** players distributed. Posting bracket and assigning roles...",
+        f"✅ CFI Season started! **{len(assignments)}** players distributed.\nUse `/cfiassignroles` when you're happy with the bracket to assign Discord roles.",
         ephemeral=True
     )
 
@@ -3906,13 +3906,34 @@ async def cfiseasonstart(interaction: discord.Interaction):
     embed.description = "\n".join(description_lines)
     await interaction.channel.send(embed=embed)
 
-    # Assign roles after responding to avoid timeout
+
+@tree.command(name="cfiassignroles", description="Assign CFI Discord roles to all players based on current bracket")
+@is_cfi_mod()
+async def cfiassignroles(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT name, league, group_letter FROM cfi_players")
+    rows = [dict(r) for r in c.fetchall()]
+    conn.close()
+
+    if not rows:
+        await interaction.followup.send("❌ No players in CFI system yet. Run `/cfiseasonstart` first.", ephemeral=True)
+        return
+
+    await interaction.followup.send(f"✅ Assigning CFI roles to **{len(rows)}** players in background...", ephemeral=True)
+
     async def assign_roles_bg():
         failed = 0
-        for member, league, group in assignments:
+        for row in rows:
+            member = interaction.guild.get_member(int(row["name"])) if row["name"].isdigit() else None
+            if not member:
+                failed += 1
+                continue
             try:
-                await assign_cfi_role(interaction.guild, member, league, group)
-                await asyncio.sleep(0.1)  # small delay to avoid rate limits
+                await assign_cfi_role(interaction.guild, member, row["league"], row["group_letter"])
+                await asyncio.sleep(0.1)
             except Exception:
                 failed += 1
         if failed:
