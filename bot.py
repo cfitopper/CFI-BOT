@@ -4850,49 +4850,47 @@ async def cfidqplayer(interaction: discord.Interaction, player: discord.Member):
     )
 
 
-@tree.command(name="cfihelp", description="Uitleg over hoe de CFI werkt")
+@tree.command(name="cfihelp", description="How the CFI works — full explanation for players")
 async def cfihelp(interaction: discord.Interaction):
     embed = discord.Embed(
         title="🏆 CFI — Competitive Football Initiative",
-        description=(
-            "Welkom bij de **CFI**! Hier vind je alles wat je moet weten om mee te doen."
-        ),
+        description="Welcome to the **CFI**! Here's everything you need to know to compete.",
         color=0x5865F2
     )
 
     embed.add_field(
-        name="📋 Wat is de CFI?",
+        name="📋 What is the CFI?",
         value=(
-            "De CFI is een competitief liga-systeem verdeeld in **6 leagues** en **3 groepen** per league.\n"
-            "Elke groep bestaat uit **5 spelers** die het deze week tegen elkaar opnemen.\n\n"
-            "**Leagues (hoog → laag):**\n"
+            "The CFI is a competitive league system split into **6 leagues** and **3 groups** per league.\n"
+            "Each group contains **5 players** who compete against each other every week.\n\n"
+            "**Leagues (highest → lowest):**\n"
             "🌌 Cosmic · 🌍 Universal · 🌠 Galaxy · 🌐 Global · 🏅 International · ⚡ Elite"
         ),
         inline=False
     )
 
     embed.add_field(
-        name="📅 Hoe werkt een week?",
+        name="📅 How does a week work?",
         value=(
-            "Elke week speel je **maximaal 4 wedstrijden** binnen jouw groep.\n"
-            "Je mag **niet twee keer** dezelfde tegenstander spelen in dezelfde week.\n\n"
-            "**Punten per week:**\n"
-            "✅ Winst = **3 punten**\n"
-            "🤝 Gelijkspel = **1 punt**\n"
-            "❌ Verlies = **0 punten**\n\n"
-            "Rangschikking binnen een groep gaat op: weekpunten → doelsaldo → doelpunten voor → vroegste punt."
+            "Each week you can play **up to 4 matches** within your group.\n"
+            "You **cannot play the same opponent twice** in the same week.\n\n"
+            "**Weekly points:**\n"
+            "✅ Win = **3 points**\n"
+            "🤝 Draw = **1 point**\n"
+            "❌ Loss = **0 points**\n\n"
+            "Group standings are decided by: weekly points → goal difference → goals scored → earliest points."
         ),
         inline=False
     )
 
     embed.add_field(
-        name="⬆️ Promotie & Relegatie",
+        name="⬆️ Promotion & Relegation",
         value=(
-            "Aan het einde van elke week worden de standen verwerkt:\n"
-            "🥇 **#1** in je groep → **gepromoveerd** naar een hogere league\n"
-            "💀 **Laatste** in je groep → **gedegradeerd** naar een lagere league\n"
-            "➡️ De rest **blijft** op hetzelfde niveau\n\n"
-            "Na de verwerking worden spelers **willekeurig herverdeeld** over nieuwe groepen A/B/C."
+            "At the end of each week the standings are processed:\n"
+            "🥇 **#1** in your group → **promoted** to a higher league\n"
+            "💀 **Last place** in your group → **relegated** to a lower league\n"
+            "➡️ Everyone else **stays** at the same level\n\n"
+            "After processing, players are **randomly redistributed** into new groups A/B/C."
         ),
         inline=False
     )
@@ -4900,9 +4898,9 @@ async def cfihelp(interaction: discord.Interaction):
     embed.add_field(
         name="🌍 Global Points",
         value=(
-            "Global points tellen op door alle seizoenen heen en bepalen de **wereldranglijst**.\n"
-            "⚠️ Week 1 telt **niet mee** voor global points — vanaf week 2 worden punten bijgehouden.\n\n"
-            "**Punten per league (winst / gelijkspel):**\n"
+            "Global points accumulate across all seasons and determine the **global leaderboard**.\n"
+            "⚠️ Week 1 does **not** count towards global points — they start from week 2 onwards.\n\n"
+            "**Points per league (win / draw):**\n"
             "🌌 Cosmic: **75** / 37\n"
             "🌍 Universal: **50** / 25\n"
             "🌠 Galaxy: **35** / 17\n"
@@ -4914,30 +4912,30 @@ async def cfihelp(interaction: discord.Interaction):
     )
 
     embed.add_field(
-        name="⚽ Score invullen",
+        name="⚽ Submitting a score",
         value=(
-            "Na een wedstrijd vul je de uitslag in via:\n"
-            "`/cfiscore` → kies je tegenstander en de doelpunten\n\n"
-            "Je tegenstander krijgt een bevestigingsverzoek — **zij moeten bevestigen**.\n"
-            "Je hebt **5 minuten** om te bevestigen voordat het verzoek verloopt."
+            "After a match, submit the result using:\n"
+            "`/cfiscore` → select your opponent and enter the goals\n\n"
+            "Your opponent receives a confirmation request — **they must confirm**.\n"
+            "They have **5 minutes** to confirm before the request expires."
         ),
         inline=False
     )
 
     embed.add_field(
-        name="📊 Handige commando's",
+        name="📊 Useful commands",
         value=(
-            "`/cfiscore` — Uitslag invullen\n"
-            "`/cfibracket` — Volledige bracket van alle leagues\n"
-            "`/cfitable` — Groepsstand bekijken\n"
-            "`/cfischedule` — Resterende wedstrijden deze week\n"
+            "`/cfiscore` — Submit a match result\n"
+            "`/cfibracket` — Full bracket for all leagues\n"
+            "`/cfitable` — View your group standings\n"
+            "`/cfischedule` — Remaining matches this week\n"
             "`/cfiranking` — Global points leaderboard\n"
-            "`/profile` — Jouw persoonlijk profiel"
+            "`/profile` — View your personal profile"
         ),
         inline=False
     )
 
-    embed.set_footer(text="Succes deze week! | CFI — Competitive Football Initiative")
+    embed.set_footer(text="Good luck this week! | CFI — Competitive Football Initiative")
     await interaction.response.send_message(embed=embed)
 
 
